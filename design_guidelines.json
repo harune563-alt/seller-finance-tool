@@ -1,0 +1,181 @@
+{
+  "project_title": "Amazon Multi-Marketplace Seller Finance & P&L Dashboard",
+  "app_type": "dashboard",
+  "theme": "light",
+  "design_archetype": "Swiss & Precision Finance (Archetype 4 with Vibrant Emerald & Slate Accents)",
+  "language": "Turkish (UI Labels and Messages) with Multi-Currency Financials ($ USD, CAD$, MXN$, £ GBP, € EUR, A$ AUD)",
+  "typography": {
+    "font_family_headings": "Outfit, Cabinet Grotesk, sans-serif",
+    "font_family_body": "Inter, IBM Plex Sans, sans-serif",
+    "font_family_mono": "JetBrains Mono, Source Code Pro, monospace",
+    "hierarchy": {
+      "h1_hero": "text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-slate-900",
+      "h2_section": "text-xl sm:text-2xl font-bold tracking-tight text-slate-800",
+      "h3_card": "text-base sm:text-lg font-semibold text-slate-800",
+      "kpi_value": "text-2xl sm:text-3xl font-extrabold tracking-tight font-mono text-slate-900",
+      "body": "text-sm text-slate-6 shadow-none font-normal leading-relaxed text-slate-600",
+      "table_data": "text-sm font-medium text-slate-700 font-mono",
+      "label": "text-xs font-semibold uppercase tracking-wider text-slate-500"
+    }
+  },
+  "colors": {
+    "background_main": "#F8FAFC",
+    "card_background": "#FFFFFF",
+    "card_border": "#E2E8F0",
+    "primary": {
+      "main": "#0F172A",
+      "hover": "#1E293B",
+      "text": "#FFFFFF"
+    },
+    "emerald_accent": {
+      "main": "#10B981",
+      "light": "#ECFDF5",
+      "border": "#A7F3D0",
+      "dark": "#047857"
+    },
+    "indigo_accent": {
+      "main": "#6366F1",
+      "light": "#EEF2FF",
+      "border": "#C7D2FE"
+    },
+    "amber_warning": {
+      "main": "#F59E0B",
+      "light": "#FEF3C7",
+      "text": "#92400E"
+    },
+    "rose_expense": {
+      "main": "#EF4444",
+      "light": "#FEF2F2",
+      "border": "#FECACA",
+      "dark": "#B91C1C"
+    },
+    "amazon_orange": {
+      "main": "#FF9900",
+      "dark": "#232F3E",
+      "light": "#FFF7ED"
+    },
+    "charts": {
+      "revenue": "#10B981",
+      "expenses": "#EF4444",
+      "net_profit": "#6366F1",
+      "amazon_payouts": "#F59E0B",
+      "fba_fees": "#8B5CF6",
+      "ad_spend": "#06B6D4"
+    }
+  },
+  "marketplaces": [
+    {"code": "ALL", "name": "Tüm Pazarlar (All Marketplaces)", "flag": "🌐", "currency": "USD", "symbol": "$"},
+    {"code": "US", "name": "Amerika Birleşik Devletleri (US)", "flag": "🇺🇸", "currency": "USD", "symbol": "$"},
+    {"code": "CA", "name": "Kanada (Canada)", "flag": "🇨🇦", "currency": "CAD", "symbol": "CA$"},
+    {"code": "MX", "name": "Meksika (Mexico)", "flag": "🇲🇽", "currency": "MXN", "symbol": "MX$"},
+    {"code": "UK", "name": "İngiltere (United Kingdom)", "flag": "🇬🇧", "currency": "GBP", "symbol": "£"},
+    {"code": "DE", "name": "Almanya (Germany)", "flag": "🇩🇪", "currency": "EUR", "symbol": "€"},
+    {"code": "FR", "name": "Fransa (France)", "flag": "🇫🇷", "currency": "EUR", "symbol": "€"},
+    {"code": "IT", "name": "İtalya (Italy)", "flag": "🇮🇹", "currency": "EUR", "symbol": "€"},
+    {"code": "ES", "name": "İspanya (Spain)", "flag": "🇪🇸", "currency": "EUR", "symbol": "€"},
+    {"code": "AU", "name": "Avustralya (Australia)", "flag": "🇦🇺", "currency": "AUD", "symbol": "A$"}
+  ],
+  "layout_and_spacing": {
+    "dashboard_grid": "MODE B: High Density Grid (grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6)",
+    "container_padding": "px-4 sm:px-6 lg:px-8 py-6 max-w-[1600px] mx-auto",
+    "card_padding": "p-5 sm:p-6",
+    "header_height": "h-16 border-b border-slate-200 bg-white shadow-sm sticky top-0 z-40",
+    "sub_header": "bg-slate-900 text-white px-6 py-3 border-b border-slate-800"
+  },
+  "key_components_to_implement": {
+    "top_navbar": {
+      "title": "Amazon Seller Suite - Kar/Zarar & Bakiye Takip",
+      "elements": [
+        "Store Switcher Dropdown (e.g. 'Alfa Global Store', 'Mega Retail US')",
+        "Marketplace Selector Pill/Dropdown with Flags (US 🇺🇸, CA 🇨🇦, DE 🇩🇪, etc.)",
+        "Currency Auto-Toggle / Consolidated FX Rate Converter Indicator",
+        "User Profile & Logout Action"
+      ]
+    },
+    "kpi_bar": {
+      "cards": [
+        {"title": "Toplam Satış (Revenue)", "key": "revenue", "color": "emerald"},
+        {"title": "Toplam Gider (Expenses)", "key": "expenses", "color": "rose"},
+        {"title": "Net Kar (Net Profit)", "key": "net_profit", "color": "indigo"},
+        {"title": "Kar Marjı % (Profit Margin)", "key": "margin", "color": "amber"},
+        {"title": "Amazon Aktif Bakiye (Balance)", "key": "amazon_balance", "color": "amazon"}
+      ]
+    },
+    "core_views": [
+      {
+        "id": "dashboard",
+        "title": "Ana Dashboard",
+        "widgets": [
+          "KPI Summaries with Month-over-Month Delta Badges",
+          "Gelir ve Kar Trend Grafiği (Recharts Area/Line Chart)",
+          "Pazar Yeri Dağılımı (Recharts Pie/Donut Chart by Marketplace)",
+          "Son İşlemler & Hızlı Ekleme Kısa Yolları",
+          "Amazon Ödeme (Disbursement) Bekleyen Bakiye Kartı"
+        ]
+      },
+      {
+        "id": "income_entry",
+        "title": "Gelir Kaydı (Sales & Income)",
+        "features": [
+          "Manual Income Entry Form (Date, Marketplace, Order ID, SKU, Product Name, Amount, Currency, Category)",
+          "CSV Import Modal for Amazon Orders Report",
+          "Filtering & Search by SKU, Order ID, Date, Marketplace"
+        ]
+      },
+      {
+        "id": "expense_entry",
+        "title": "Gider Kaydı (Expenses)",
+        "features": [
+          "Expense Form (FBA Fees, PPC Advertising, COGS / Ürün Maliyeti, Shipping, Refunds, Monthly Subscription)",
+          "Categorized Expense Breakdown",
+          "CSV Import for Fee Reports"
+        ]
+      },
+      {
+        "id": "payouts_balance",
+        "title": "Amazon Ödemeleri & Bakiye Takibi",
+        "features": [
+          "Record Amazon Disbursement / Settlement Deposit",
+          "Disbursement Status (Initiated, Processing, In Bank)",
+          "Net Payout vs Pending Reserve Balance Tracker"
+        ]
+      },
+      {
+        "id": "p_and_l_report",
+        "title": "P&L / Kar-Zarar Raporu",
+        "features": [
+          "Detailed Waterfall P&L Table (Gross Sales -> Discounts -> Refunds -> Net Sales -> COGS -> FBA Fees -> PPC -> Net Profit)",
+          "Date Range Selector (Bugün, Bu Hafta, Bu Ay, Son 90 Gün, Özel)",
+          "Marketplace Side-by-Side Comparison Columns"
+        ]
+      },
+      {
+        "id": "store_management",
+        "title": "Mağaza & Pazar Yeri Yönetimi",
+        "features": [
+          "Create New Seller Store (e.g., 'E-Com Empire EU')",
+          "Assign Active Marketplaces per Store (US, CA, MX, UK, DE, FR, IT, ES, AU)",
+          "Default Currency Setting per Marketplace"
+        ]
+      }
+    ]
+  },
+  "interactive_states_and_accessibility": {
+    "data_testid_rule": "MANDATORY: Every input, button, tab, dropdown, table row, and modal must contain unique kebab-case data-testid attributes (e.g. data-testid='store-switcher-dropdown', data-testid='income-submit-button', data-testid='kpi-net-profit-card').",
+    "dropdown_backgrounds": "NEVER use transparent backgrounds on dropdowns, select menus, or popovers. Always use solid bg-white dark:bg-slate-900 with shadow-lg and border border-slate-200.",
+    "hover_contrast": "Ensure explicit hover states like hover:bg-slate-900 hover:text-white or hover:bg-emerald-700 hover:text-white.",
+    "toast_notifications": "Use sonner (imported from @/components/ui/sonner) for instant feedback on record saving, CSV imports, store switches, and errors."
+  },
+  "image_urls": {
+    "analytics_laptop": "https://images.unsplash.com/photo-1551288049-bebda4e38f71?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHxfHxlY29tbWVyY2UlMjBzZWxsZXIlMjBhbmFseXRpY3MlMjBkYXNoYm9hcmQlMjB3b3Jrc3BhY2V8ZW58MHx8fHwxNzkxMTI5MTEwfDA&ixlib=rb-4.1.0&q=85",
+    "finance_charts": "https://images.unsplash.com/photo-1526628953301-3e589a6a8b74?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHw0fHxlY29tbWVyY2UlMjBzZWxsZXIlMjBhbmFseXRpY3MlMjBkYXNoYm9hcmQlMjB3b3Jrc3BhY2V8ZW58MHx8fHwxNzkxMTI5MTEwfDA&ixlib=rb-4.1.0&q=85",
+    "workspace_laptop": "https://images.unsplash.com/photo-1608222351212-18fe0ec7b13b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHwyfHxlY29tbWVyY2UlMjBzZWxsZXIlMjBhbmFseXRpY3MlMjBkYXNoYm9hcmQlMjB3b3Jrc3BhY2V8ZW58MHx8fHwxNzkxMTI5MTEwfDA&ixlib=rb-4.1.0&q=85"
+  },
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "Use modern pill-shaped or sharp rounded buttons with responsive hover & active animations.",
+    "Do NOT center align main app container; maintain natural left-aligned data reading flow.",
+    "Add explicit data-testid to every interactive component.",
+    "Keep standard light theme crisp and high-contrast, utilizing tinting for table stripes and hover states.",
+    "Ensure all financial figures display appropriate currency symbols according to selected marketplace or default store currency."
+  ]
+}
