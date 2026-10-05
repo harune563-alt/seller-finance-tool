@@ -1,0 +1,51 @@
+{
+  "summary": "Completed backend + frontend validation for CAD-native income/refunds/payouts with USD cost accounting and Frankfurter FX snapshots. Backend regression suites are fully green; UI critical workflows passed on public URL across responsive breakpoints.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Transactions / FX status rendering",
+        "issues": [
+          "Console warning: key prop is spread into <FxStatus {...fx}> props object."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fx_usd_workflows.py",
+    "/app/backend/tests/test_fx_failure_modes_unit.py",
+    "/app/backend/tests/test_finance_regression.py",
+    "/app/backend/tests/test_auth_hardening.py",
+    "/app/test_reports/pytest/pytest_results_iter4_backend_full.xml",
+    "/app/test_reports/pytest/pytest_results_iter4_fx.xml",
+    "/app/test_reports/pytest/pytest_results_iter4_fx_unit.xml"
+  ],
+  "action_items": [
+    "Optional cleanup: remove FxStatus key-spread warning by passing props explicitly instead of spreading object containing key.",
+    "Optional: run one more UI delete regression in a populated store context (last quick pass had no rows in selected store)."
+  ],
+  "critical_code_review_comments": [
+    "No blocking API or UI integration defect found in this iteration.",
+    "FX snapshot pinning and USD ledger persistence behavior matched expected contract in API tests.",
+    "Native balances remained currency-isolated and were not merged into USD totals."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fx_usd_workflows.py",
+    "/app/backend/tests/test_fx_failure_modes_unit.py",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "95%"
+  },
+  "seed_data_creation": "UI run created temporary store TEST_UI_FX_007cb7 with CAD sample transactions/payouts for live flow validation. Backend fixture stores were auto-cleaned.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public URL flows are currently stable with cookie login (no prior 403 blocker repro). Added durable FX-focused API suite and unit mock suite for provider-failure/offline snapshot behavior. If extending UI checks, switch to TEST_UI_FX_007cb7 or create a fresh store before validating delete-row actions.",
+  "rca of the issue": "Minor frontend console RCA: useFxQuote state includes a key field, and spreading this object into FxStatus causes React warning about key in spread props. Functional impact not observed, but cleanup improves console hygiene and maintainability."
+}

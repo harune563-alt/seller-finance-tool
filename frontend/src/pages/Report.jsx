@@ -4,6 +4,7 @@ import { useStore } from "@/contexts/StoreContext";
 import { MP_BY_CODE, formatMoney } from "@/constants/marketplaces";
 import { FinanceSummary } from "@/components/FinanceSummary";
 import { FinanceCurrency } from "@/components/FinanceCurrency";
+import { MissingFxAlert } from "@/components/FxStatus";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,7 +37,7 @@ export default function Report() {
     return () => { current = false; };
   }, [activeStoreId, activeMarketplace, start, end, currency]);
   const exportCsv = () => {
-    if (!data) return;
+    if (!data || data.incomplete_count) return;
     const rows = [["Pazar Yeri", "Para Birimi", "Gelir", "Gider", "Net Kar", "Kar/Zarar %"],
       ...data.by_marketplace.map(m => [m.marketplace, data.currency, m.revenue, m.expenses, m.net, m.revenue > 0 ? (m.net / m.revenue * 100).toFixed(2) : ""]),
       ["TOPLAM", data.currency, data.revenue, data.expenses, data.net_profit, data.margin], [], ["Gider / Geri Kazanim", "Para Birimi", "Tutar"],
@@ -46,13 +47,14 @@ export default function Report() {
     const a = document.createElement("a"); a.href = url; a.download = `kar-zarar-${data.currency}-${start}-${end}.csv`; a.click(); URL.revokeObjectURL(url);
   };
   return <div className="space-y-6" data-testid="report-page">
-    <div className="flex items-end justify-between flex-wrap gap-3"><h1 className="font-display text-3xl sm:text-4xl font-extrabold">Kâr-Zarar Raporu</h1><Button onClick={exportCsv} disabled={!data || loading} variant="outline" className="bg-white" data-testid="export-csv-btn"><Download className="w-4 h-4 mr-2" />CSV İndir</Button></div>
+    <div className="flex items-end justify-between flex-wrap gap-3"><h1 className="font-display text-3xl sm:text-4xl font-extrabold">Kâr-Zarar Raporu · USD</h1><Button onClick={exportCsv} disabled={!data || loading || data.incomplete_count > 0} variant="outline" className="bg-white" data-testid="export-csv-btn"><Download className="w-4 h-4 mr-2" />CSV İndir</Button></div>
     <div className="border-y border-slate-200 bg-white py-5 px-4 flex flex-wrap items-end gap-3">
       <div><Label htmlFor="report-start">Başlangıç</Label><Input id="report-start" type="date" value={start} onChange={e => setStart(e.target.value)} data-testid="start-date" className="mt-2 w-44" /></div>
       <div><Label htmlFor="report-end">Bitiş</Label><Input id="report-end" type="date" value={end} onChange={e => setEnd(e.target.value)} data-testid="end-date" className="mt-2 w-44" /></div>
       <div className="flex gap-2 flex-wrap">{presets.map(p => <Button key={p.id} variant="outline" size="sm" data-testid={`preset-${p.id}`} onClick={() => { const [s, e] = p.get(); setStart(iso(s)); setEnd(iso(e)); }}>{p.label}</Button>)}</div>
     </div>
     <FinanceCurrency summary={data} value={currency} onChange={setCurrency} prefix="report" />
+    <MissingFxAlert summary={data} prefix="report" />
     {error && <p role="alert" data-testid="report-error" className="text-sm text-rose-600">{error}</p>}
     <FinanceSummary summary={data} currency={data?.currency} prefix="report" loading={loading} />
     <section className="space-y-4"><div className="flex flex-wrap justify-between gap-3"><h2 className="font-display text-lg font-bold">Pazar Yeri Karşılaştırması</h2><span className="text-sm text-slate-500" data-testid="report-margin">Kâr marjı: {data?.revenue > 0 ? `${data.margin.toFixed(2)}%` : "—"}</span></div>

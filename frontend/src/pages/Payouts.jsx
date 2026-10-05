@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import KpiCard from "@/components/KpiCard";
 import { FinanceCurrency } from "@/components/FinanceCurrency";
 import { useFormMarketplace } from "@/hooks/useFormMarketplace";
+import { MissingFxAlert, NativeBalances, formatUsd } from "@/components/FxStatus";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -43,7 +44,7 @@ export default function Payouts() {
     (async () => {
       try {
         const s = await api.get("/dashboard/summary", { params });
-        const t = await api.get("/transactions", { params: { ...params, currency: s.data.currency, type: "payout" } });
+        const t = await api.get("/transactions", { params: { ...params, type: "payout" } });
         if (current) { setRows(t.data); setSummary(s.data); }
       } catch { if (current) setError("Ödemeler yüklenemedi."); }
     })();
@@ -69,10 +70,6 @@ export default function Payouts() {
     catch { toast.error("Ödeme silinemedi"); }
   };
 
-  const currency = summary?.currency || (activeMarketplace !== "ALL"
-    ? MP_BY_CODE[activeMarketplace]?.currency || "USD"
-    : activeStore?.default_currency || "USD");
-
   return (
     <div className="space-y-6" data-testid="payouts-page">
       <div>
@@ -81,15 +78,16 @@ export default function Payouts() {
       </div>
 
       <FinanceCurrency summary={summary} value={selectedCurrency} onChange={setSelectedCurrency} prefix="payout" />
+      <MissingFxAlert summary={summary} prefix="payout" />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard testId="pk-balance" label="Bekleyen Amazon Bakiye" accent="amazon" icon={Wallet}
-                 value={formatMoney(summary?.amazon_balance || 0, currency)}
+                 value={<NativeBalances summary={summary} prefix="payout-amazon" />}
                  hint="Tahmini · rezervler hariç" />
         <KpiCard testId="pk-received" label="Toplam Alınan Ödeme" accent="emerald" icon={Wallet}
-                 value={formatMoney(summary?.payouts_received || 0, currency)}
+                 value={<NativeBalances summary={summary} field="payouts_received" prefix="payout-received" />}
                  hint="Hesaba düşen toplam" />
-        <KpiCard testId="pk-net" label="Net Kar" accent="indigo" icon={Wallet}
-                 value={formatMoney(summary?.net_profit || 0, currency)}
+        <KpiCard testId="pk-net" label="Net Kâr (USD)" accent="indigo" icon={Wallet}
+                 value={formatUsd(summary?.net_profit)}
                  hint="Gelir − Gider" />
       </div>
 

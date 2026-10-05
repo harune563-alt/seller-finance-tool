@@ -5,6 +5,7 @@ import { useStore } from "@/contexts/StoreContext";
 import { MP_BY_CODE, formatMoney } from "@/constants/marketplaces";
 import KpiCard from "@/components/KpiCard";
 import { FinanceCurrency } from "@/components/FinanceCurrency";
+import { MissingFxAlert, NativeBalances, formatUsd } from "@/components/FxStatus";
 import { Button } from "@/components/ui/button";
 import {
   TrendingUp, TrendingDown, DollarSign, Percent, Wallet, Receipt,
@@ -25,7 +26,6 @@ export default function Dashboard() {
   const [selectedCurrency, setSelectedCurrency] = useState("");
   const [error, setError] = useState("");
 
-  const currency = summary?.currency || MP_BY_CODE[activeMarketplace]?.currency || activeStore?.default_currency;
   useEffect(() => { setSelectedCurrency(""); }, [activeMarketplace, activeStoreId]);
 
   useEffect(() => {
@@ -38,7 +38,7 @@ export default function Dashboard() {
         const params = { store_id: activeStoreId, ...(selectedCurrency ? { currency: selectedCurrency } : {}) };
         if (activeMarketplace !== "ALL") params.marketplace = activeMarketplace;
         const s = await api.get("/dashboard/summary", { params });
-        const t = await api.get("/transactions", { params: { ...params, currency: s.data.currency, limit: 8 } });
+        const t = await api.get("/transactions", { params: { ...params, limit: 8 } });
         if (current) { setSummary(s.data); setRecent(t.data); }
       } catch {
         if (current) setError("Özet yüklenemedi. Lütfen tekrar deneyin.");
@@ -68,7 +68,7 @@ export default function Dashboard() {
     );
   }
 
-  const kpis = summary || { revenue: 0, expenses: 0, net_profit: 0, margin: 0, amazon_balance: 0 };
+  const kpis = summary || {};
   const trendData = (summary?.trend || []).map((t) => ({ ...t, label: t.month }));
   const pieData = (summary?.by_marketplace || [])
     .filter((m) => m.revenue > 0)
@@ -101,24 +101,25 @@ export default function Dashboard() {
       </div>
 
       <FinanceCurrency summary={summary} value={selectedCurrency} onChange={setSelectedCurrency} prefix="dashboard" />
+      <MissingFxAlert summary={summary} prefix="dashboard" />
       {error && <p role="alert" data-testid="dashboard-error" className="text-sm text-rose-600">{error}</p>}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
-        <KpiCard testId="kpi-revenue" label="Toplam Satış" accent="emerald" icon={TrendingUp}
-                 value={formatMoney(kpis.revenue, currency)} hint="Gelir toplamı" />
-        <KpiCard testId="kpi-expenses" label="Toplam Gider" accent="rose" icon={TrendingDown}
-                 value={formatMoney(kpis.expenses, currency)} hint="İadeler, ücretler, net maliyetler" />
-        <KpiCard testId="kpi-net-profit" label="Net Kar" accent="indigo" icon={DollarSign}
-                 value={formatMoney(kpis.net_profit, currency)} hint="Gelir − Gider" />
+        <KpiCard testId="kpi-revenue" label="Toplam Satış (USD)" accent="emerald" icon={TrendingUp}
+                 value={formatUsd(kpis.revenue)} hint="İşlem tarihindeki kurla" />
+        <KpiCard testId="kpi-expenses" label="Toplam Gider (USD)" accent="rose" icon={TrendingDown}
+                 value={formatUsd(kpis.expenses)} hint="İadeler, ücretler, net maliyetler" />
+        <KpiCard testId="kpi-net-profit" label="Net Kâr (USD)" accent="indigo" icon={DollarSign}
+                 value={formatUsd(kpis.net_profit)} hint="Gelir − Gider" />
         <KpiCard testId="kpi-margin" label="Kar Marjı" accent="amber" icon={Percent}
-                 value={`${(kpis.margin || 0).toFixed(1)}%`} hint="Net Kar / Gelir" />
+                 value={kpis.margin == null ? "—" : `${kpis.margin.toFixed(1)}%`} hint="Net Kar / Gelir" />
         <KpiCard testId="kpi-amazon-balance" label="Amazon Bakiye" accent="amazon" icon={Wallet}
-                 value={formatMoney(kpis.amazon_balance, currency)} hint="Tahmini · rezervler hariç" />
+                 value={<NativeBalances summary={summary} prefix="dashboard-amazon" />} hint="Yerel para birimi · Tahmini" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="min-w-0 lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-display text-lg font-bold text-slate-900">Gelir ve Kar Trendi</h2>
+            <h2 className="font-display text-lg font-bold text-slate-900">Gelir ve Kâr Trendi (USD)</h2>
             <span className="text-xs text-slate-500 font-mono-num">Aylık</span>
           </div>
           <div className="h-72">

@@ -24,6 +24,8 @@ from amazon_csv import parse_amazon_csv
 from auth_security import check_login_limit, record_login_failure
 from starlette.responses import JSONResponse
 from proxy_origin import OriginAliasMiddleware
+from fx_service import FxQuote, FxError, get_rate
+from usd_ledger import attach_usd, enrich_records, summary_usd, FIELDS as USD_COST_FIELDS
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -167,6 +169,12 @@ class TransactionOut(TransactionIn):
     id: str
     created_at: str
     source: str = "manual"
+    cost_currency: str
+    fx: Optional[FxQuote] = None
+    amount_usd: Optional[float] = None
+    usd_costs: dict[str, float] = Field(default_factory=dict)
+    fx_status: str
+    fx_error: Optional[str] = None
 
 
 class SummaryBucket(BaseModel):
@@ -188,16 +196,24 @@ class CategoryBucket(BaseModel):
     amount: float
 
 
-class SummaryOut(CostsIn):
-    revenue: float
-    expenses: float
-    net_profit: float
-    margin: float
+class NativeBalance(BaseModel):
+    currency: str
     amazon_balance: float
     payouts_received: float
+
+
+class SummaryOut(CostsIn):
+    revenue: Optional[float]
+    expenses: Optional[float]
+    net_profit: Optional[float]
+    margin: Optional[float]
     transaction_count: int
     currency: str
+    source_currency: str
     available_currencies: List[str]
+    native_balances: List[NativeBalance]
+    incomplete_count: int
+    fx_errors: List[str]
     by_marketplace: List[MarketplaceBucket]
     by_category: List[CategoryBucket]
     trend: List[TrendBucket]
@@ -268,6 +284,14 @@ async def me(user=Depends(get_current_user)):
 async def list_marketplaces():
     return [{"code": c, **info} for c, info in MARKETPLACES.items()]
 
+
+@api.get("/fx/to-usd", response_model=FxQuote)
+async def fx_to_usd(currency: str, date: str, user=Depends(get_current_user)):
+    try:
+        return FxQuote(**await get_rate(db, currency, date))
+    except FxError as exc:
+        raise HTTPException(422, str(exc))
+
 # ------------------ Stores ------------------
 @api.post("/stores", response_model=StoreOut)
 async def create_store(data: StoreIn, user=Depends(get_current_user)):
@@ -328,8 +352,13 @@ async def create_transaction(data: TransactionIn, user=Depends(get_current_user)
     tid = str(uuid.uuid4())
     doc = {
         "id": tid, "user_id": user["id"], **data.model_dump(),
+        "cost_currency": "USD",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    try:
+        doc = await attach_usd(db, doc)
+    except FxError as exc:
+        raise HTTPException(422, str(exc))
     await db.transactions.insert_one(doc)
     return TransactionOut(**{k: v for k, v in doc.items() if k not in ("_id", "user_id")})
 
@@ -349,13 +378,14 @@ async def list_transactions(
     if marketplace and marketplace != "ALL": q["marketplace"] = marketplace
     if type: q["type"] = type
     else: q["type"] = {"$in": ["income", "expense", "payout"]}
-    if currency: q["currency"] = currency
+    if currency and currency != "ALL": q["currency"] = currency
     if start_date or end_date:
         q["date"] = {}
         if start_date: q["date"]["$gte"] = start_date
         if end_date: q["date"]["$lte"] = end_date
-    docs = await db.transactions.find(q, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(limit)
-    return [TransactionOut(**d) for d in docs]
+    docs = await db.transactions.find(q, {"_id": 0}).sort("date", -1).to_list(limit)
+    enriched = await enrich_records(db, docs)
+    return [TransactionOut(**d) for d in enriched]
 
 
 @api.patch("/transactions/{tx_id}/costs", response_model=TransactionOut)
@@ -367,13 +397,20 @@ async def update_transaction_costs(tx_id: str, data: CostsIn, user=Depends(get_c
         raise HTTPException(400, "İade kaydına yeni ürün/kargo maliyeti eklenemez")
     if existing["category"] != "Refunds" and any(getattr(data, key) for key in RECOVERY_FIELDS):
         raise HTTPException(400, "Geri kazanımlar yalnızca Refunds kaydına eklenebilir")
+    try:
+        existing = await attach_usd(db, existing, persist=True)
+    except FxError as exc:
+        raise HTTPException(422, str(exc))
+    changes = {**data.model_dump(), "cost_currency": "USD", "usd_costs": data.model_dump()}
+    if existing.get("cost_currency") != "USD" and not existing.get("original_costs"):
+        changes["original_costs"] = {"currency": existing["cost_currency"], **{key: existing.get(key, 0) for key in USD_COST_FIELDS}}
     doc = await db.transactions.find_one_and_update(
         {"id": tx_id, "user_id": user["id"]},
-        {"$set": data.model_dump()}, return_document=True, projection={"_id": 0, "user_id": 0},
+        {"$set": changes}, return_document=True, projection={"_id": 0},
     )
     if not doc:
         raise HTTPException(404, "İşlem bulunamadı")
-    return TransactionOut(**doc)
+    return TransactionOut(**await attach_usd(db, doc))
 
 @api.delete("/transactions/{tx_id}")
 async def delete_transaction(tx_id: str, user=Depends(get_current_user)):
@@ -403,15 +440,14 @@ async def dashboard_summary(
     if start_date and end_date and start_date > end_date:
         raise HTTPException(400, "Başlangıç tarihi bitişten sonra olamaz")
     available = sorted(await db.transactions.distinct("currency", q))
-    store = await db.stores.find_one({"id": store_id, "user_id": user["id"]}, {"_id": 0}) if store_id else None
-    default = MARKETPLACES.get(marketplace, {}).get("currency") or (store or {}).get("default_currency")
-    chosen = currency or (default if default in available else (available[0] if available else default))
-    chosen = chosen or "USD"
-    if chosen not in {mp["currency"] for mp in MARKETPLACES.values()}:
+    chosen = currency or "ALL"
+    if chosen != "ALL" and chosen not in {mp["currency"] for mp in MARKETPLACES.values()}:
         raise HTTPException(400, "Geçersiz para birimi")
-    q["currency"] = chosen
-    txs = await db.transactions.find(q, {"_id": 0, "user_id": 0}).to_list(None)
-    return SummaryOut(**summarize(txs), currency=chosen, available_currencies=sorted(set(available + [chosen])))
+    if chosen != "ALL":
+        q["currency"] = chosen
+    txs = await db.transactions.find(q, {"_id": 0}).to_list(None)
+    enriched = await enrich_records(db, txs)
+    return SummaryOut(**summary_usd(enriched), currency="USD", source_currency=chosen, available_currencies=available)
 
 # ------------------ CSV Import ------------------
 @api.post("/transactions/import", response_model=ImportOut)
@@ -442,7 +478,11 @@ async def import_csv(
     fingerprints = [d["source_fingerprint"] for d in docs]
     existing = set(await db.transactions.distinct("source_fingerprint", {**scope, "source_fingerprint": {"$in": fingerprints}}))
     for doc in docs:
-        doc.update(scope, id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc).isoformat())
+        doc.update(scope, id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc).isoformat(), cost_currency="USD")
+    try:
+        docs = await enrich_records(db, docs, persist=False, strict=True)
+    except FxError as exc:
+        raise HTTPException(422, str(exc))
     inserted = 0
     if commit and docs:
         result = await db.transactions.bulk_write([
@@ -477,6 +517,7 @@ app.add_middleware(OriginAliasMiddleware, aliases=CORS_ORIGIN_ALIASES)
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
+    await db.fx_rates.create_index([("source", 1), ("base", 1), ("quote", 1), ("requested_date", 1)], unique=True)
     await db.login_attempts.create_index("identifier", unique=True)
     await db.login_attempts.create_index("expires_at", expireAfterSeconds=0)
     await db.stores.create_index("user_id")

@@ -5,6 +5,7 @@ import api from "@/lib/api";
 import { useStore } from "@/contexts/StoreContext";
 import { FinanceSummary } from "@/components/FinanceSummary";
 import { FinanceCurrency } from "@/components/FinanceCurrency";
+import { MissingFxAlert, NativeBalances } from "@/components/FxStatus";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
 import { TransactionList } from "@/components/transactions/TransactionList";
 import { CostDialog } from "@/components/transactions/CostDialog";
@@ -36,7 +37,7 @@ export default function Transactions() {
     (async () => {
       try {
         const { data: totals } = await api.get("/dashboard/summary", { params });
-        const { data } = await api.get("/transactions", { params: { ...params, currency: totals.currency, limit: 10000 } });
+        const { data } = await api.get("/transactions", { params: { ...params, limit: 10000 } });
         if (current) { setSummary(totals); setRows(data.filter(t => t.type !== "payout")); }
       } catch { if (current) setError("Kayıtlar yüklenemedi. Yeniden deneyin."); }
       finally { if (current) setLoading(false); }
@@ -54,6 +55,8 @@ export default function Transactions() {
     {!activeStoreId ? <Link to="/stores" data-testid="tx-create-store" className="text-emerald-700 underline">Mağaza oluştur</Link> : <>
       <FinanceCurrency summary={summary} value={currency} onChange={setCurrency} prefix="tx" />
       <FinanceSummary summary={summary} currency={summary?.currency} loading={loading} />
+      <MissingFxAlert summary={summary} prefix="tx" />
+      <div className="border-y border-slate-200 py-3 flex flex-wrap items-center justify-between gap-3" data-testid="tx-amazon-balances"><span className="text-sm text-slate-500">Amazon Bakiyesi · Yerel para birimi · Tahmini</span><NativeBalances summary={summary} prefix="tx-amazon" /></div>
       {error && <div role="alert" data-testid="tx-load-error" className="text-rose-700 text-sm">{error}<Button variant="ghost" onClick={refresh} data-testid="tx-retry">Tekrar dene</Button></div>}
       <TransactionForm onSaved={refresh} />
       <Tabs value={filter} onValueChange={setFilter}><TabsList data-testid="tx-record-filters"><TabsTrigger value="all" data-testid="tab-all">Tüm İşlemler</TabsTrigger><TabsTrigger value="profit" data-testid="tab-profit">Kârlı</TabsTrigger><TabsTrigger value="loss" data-testid="tab-loss">Zararlı</TabsTrigger></TabsList></Tabs>
