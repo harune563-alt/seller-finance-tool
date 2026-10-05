@@ -6,6 +6,17 @@ JWT e-posta/şifre, tek mağazada çoklu pazar (US, CA, MX, UK, DE, AU vb.),
 çoklu para birimi, manuel giriş ve CSV aktarımı; Türkçe açık temalı finans paneli.
 
 ## Son kullanıcı talebi
+### Son güncelleme: işlem arama ve ödeme referansı (2026-10-05)
+Gelir/Gider işlem kayıtlarında Order ID sorgusu; Amazon ödeme hareketlerinde filtreleme istendi.
+Kullanıcı tarih aralığı, işlem türü/durum ve kısmi aramayı onayladı; ödeme tarafında
+**Order ID değil, ayrı ödeme referansı** istedi.
+- Gelir/Gider: Order ID kısmi/büyük-küçük harf duyarsız arama, başlangıç/bitiş ve kategori filtreleri.
+- Payouts: payment_reference veya eski açıklama/not üzerinden arama; tarih ve ödeme durumu filtresi.
+- Tarih/kategori bir siparişin en az bir aynı hareketinde eşleşir; siparişin bütün hareketleri korunur.
+- Liste filtreleri genel P&L/bakiye özetini değiştirmez. Sipariş sonucu USD, ödeme/bakiye yerel döviz olarak kalır.
+- Referans isteğe bağlı (max200), kırpılır, ödeme oluşturulurken veya sonradan düzenlenebilir; order_id ile ayrı alan.
+- Sonuç sayısı, temizleme, hata/boş/yükleniyor durumları ve 20 grup/kayıtlık sunucu sayfalaması.
+
 ### Son güncelleme: otomatik kur ve USD maliyet muhasebesi (2026-10-05)
 Kullanıcı CAD satış tutarı ve Amazon ödeme/bakiyesini CAD takip etmek; tüm pazarlarda
 ürün/kargo/ekstra maliyetleri USD girmek ve nihai kâr/zararı USD hesaplamak istedi.
@@ -32,6 +43,10 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - `/app/backend/fx_service.py`: Frankfurter v2 tarihsel döviz/USD kuru, HTTP timeout/retry,
   MongoDB fx_rates önbelleği ve eşzamanlı istek kilitleri. Anahtar gerekmiyor.
 - `/app/backend/usd_ledger.py`: immutable kur/snapshot, USD türetilmiş tutarlar ve yerel bakiye ayrımı.
+- `/app/backend/ledger_search.py`: store/user/pazar/döviz kapsamında tam sipariş grubu arama ve ödeme sayfalama.
+- `/app/frontend/src/hooks/useRecordSearch.js`: 300ms arama debounce, stale response koruması, filtre ve sayfa yönetimi.
+- `components/RecordFilters.jsx`, `components/payouts/PayoutHistory.jsx`, `PaymentReferenceDialog.jsx`:
+  iki listeye ortak filtre kontrolleri, ödeme referansı görünümü/düzenleme ve responsive ödeme geçmişi.
 - `/app/frontend/src/hooks/useFxQuote.js`, `components/FxStatus.jsx`: canlı kur önizleme, kaynak/tarih,
   yerel bakiye listesi ve eksik kur uyarıları.
 - `/app/backend/amazon_csv.py`: Amazon CSV tür/tarih/tutar eşleme ve satır hataları.
@@ -45,6 +60,9 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - Transaction ek alanları: cost_currency, fx {base/quote/rate/requested_date/rate_date/source/fetched_at},
   amount_usd, usd_costs, fx_status. Legacy orijinaller okunurken değiştirilmez.
 - GET `/api/fx/to-usd?currency=CAD&date=YYYY-MM-DD` authenticated; dış servise yalnızca tarih/döviz gider.
+- GET `/api/transactions/search`: view=orders|payouts, store_id, marketplace, currency, search,
+  category, start_date/end_date, outcome=all|profit|loss, page/page_size. Response items/total/page/page_size/total_pages.
+- PATCH `/api/payouts/{id}/reference`: yalnızca kullanıcıya ait payout payment_reference alanını günceller.
 - Summary yeni sözleşmesi: currency=USD, source_currency=ALL veya native filtre,
   native_balances[{currency,amazon_balance,payouts_received}], incomplete_count/fx_errors.
   Eski üst-seviye amazon_balance/payouts_received yerine yerel döviz dizisi kullanılır.
@@ -95,11 +113,13 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - ChatGPT entegrasyonu için kullanım/model/anahtar seçimi bekleniyor.
 - Kullanıcının gerçek Amazon CSV örneğiyle bölgesel rapor uyumluluğunu doğrulama.
 - Kullanıcının gerçek CAD Amazon CSV'siyle kabul kontrolü.
+- İsteğe bağlı kayıtlı filtreler (ör. bekleyen CAD ödemeleri / bu ay iade alan siparişler).
 ### P2 — Gelecek
 - Özel kategori yönetimi (yeniden istenirse), bütçe/maliyet trend analizi.
 - Amazon rezerv ve ödeme mutabakatı.
 - Claim takibi: beklemede / onaylandı / ödendi; geri ödeme tarihine göre raporlama.
-- Büyük veri hacmi için sunucu tarafında sipariş sayfalaması (mevcut işlem görünümü en fazla 10.000 kayıt çeker).
+- Çok yüksek veri hacminde Mongo aggregation tabanlı arama/gruplama optimizasyonu (mevcut geçmiş görünümü
+  artık sunucuda sayfalı ve 500/10.000 kayıt sınırından bağımsız; sipariş adayları sunucuda gruplandırılıyor).
 - Amazon/banka gerçek ödeme kuru ile referans kur arasındaki gerçekleşmiş kur farkı takibi.
 
 ## Doğrulama geçmişi
@@ -137,3 +157,21 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - Son UI kanıtı: `/root/.emergent/automation_output/20261005_163352/console_20261005_163352.log`;
   `/app/test_reports/fx-smoke.jpg`. `TEST_UI_FX_007cb7` geçici test mağazası temizlendi.
 - Frankfurter config: FRANKFURTER_BASE_URL ve FX_TIMEOUT_SECONDS backend/.env; httpx dependency requirements'ta.
+
+## Son tamamlanan çalışma — filtreler/referans (2026-10-05)
+- Arama/kategori/tarih/pagination backend ve iki liste UI tamamlandı; tek bir sipariş asla sayfalara bölünmez.
+- Kâr/zarar filtresi sayfalama öncesi tam USD sipariş sonucuna uygulanır; regex karakterleri literal aranır.
+- Referans ekleme/düzenleme/temizleme, eski not araması, kullanıcı/pazar/mağaza ayrımı doğrulandı.
+- Mağaza/pazar/kaynak para birimi değişince yeni liste filtreleri reset; kayıt düzenleme/silmede arama korunur.
+- Payout geçmişi uzun referanslarda taşmayan responsive satırlara ayrıldı.
+- Menüye tıklanamaması RCA: top-right Sonner başarı bildirimi marketplace düğmesini kapatıyordu.
+  DOM elementFromPoint ile yeniden üretildi, App.js Toaster bottom-right'a alındı ve aktif bildirim varken tek tıklama doğrulandı.
+- `/app/test_reports/iteration_5.json`: 11 yeni API testi +11 finans regresyon testi geçti. Agentın belirsiz bıraktığı
+  pazar filtresi reseti ana ajan tarafından CA→ALL, currency ve store değişimlerinde doğrulandı.
+- Son frontend self-test: ödeme arama+tarih+durum resetleri, menü erişimi ve iki sayfada320px taşma kontrolü geçti.
+- 390/768/1024/1440 görüntüler testing agent tarafından geçti; final build uyarısız başarılı.
+- Kanıtlar: `/app/test_reports/history_filters_final_verification.json`, `/app/test_reports/history-filters-build.log`,
+  `/app/test_reports/pytest/pytest_results_iter5_backend.xml`, `/app/test_reports/pytest/pytest_results_iter5_regression.xml`,
+  `/root/.emergent/automation_output/20261005_181730/console_20261005_181730.log`.
+- TEST_FILTER_* test verileri temizlendi, mevcut kullanıcı kayıtlarına dokunulmadı. Oluşturulan regresyon test hesabı
+  test_credentials.md dosyasında kayıtlı. Bu çalışma ek entegrasyon veya MOCK API içermez.

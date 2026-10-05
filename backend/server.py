@@ -26,6 +26,7 @@ from starlette.responses import JSONResponse
 from proxy_origin import OriginAliasMiddleware
 from fx_service import FxQuote, FxError, get_rate
 from usd_ledger import attach_usd, enrich_records, summary_usd, FIELDS as USD_COST_FIELDS
+from ledger_search import search_history
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -153,6 +154,12 @@ class TransactionIn(CostsIn):
     date: str  # ISO date (YYYY-MM-DD)
     description: Optional[str] = ""
     order_id: Optional[str] = ""
+    payment_reference: str = Field(default="", max_length=200)
+
+    @field_validator("payment_reference", mode="before")
+    @classmethod
+    def normalize_payment_reference(cls, value):
+        return value.strip() if isinstance(value, str) else value or ""
 
     @field_validator("date")
     @classmethod
@@ -232,6 +239,23 @@ class ImportOut(BaseModel):
     issues: List[ImportIssue]
     preview: List[TransactionOut]
     committed: bool
+
+
+class HistoryOut(BaseModel):
+    items: List[TransactionOut]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PaymentReferenceIn(BaseModel):
+    payment_reference: str = Field(max_length=200)
+
+    @field_validator("payment_reference")
+    @classmethod
+    def trim_reference(cls, value):
+        return value.strip()
 
 # ---------------------------------------------------------------------------
 # App & Router
@@ -347,6 +371,8 @@ async def create_transaction(data: TransactionIn, user=Depends(get_current_user)
         raise HTTPException(400, "Order payments gelir; Refunds ve Service Fees gider olarak kaydedilir")
     if data.type != "income" and any(getattr(data, key) for key in COST_FIELDS):
         raise HTTPException(400, "Maliyetler yalnızca gelir kaydına eklenebilir")
+    if data.type != "payout" and data.payment_reference:
+        raise HTTPException(400, "Ödeme referansı yalnızca Amazon ödemelerine eklenebilir")
     if data.category != "Refunds" and any(getattr(data, key) for key in RECOVERY_FIELDS):
         raise HTTPException(400, "Geri kazanımlar yalnızca Refunds kaydına eklenebilir")
     tid = str(uuid.uuid4())
@@ -386,6 +412,38 @@ async def list_transactions(
     docs = await db.transactions.find(q, {"_id": 0}).sort("date", -1).to_list(limit)
     enriched = await enrich_records(db, docs)
     return [TransactionOut(**d) for d in enriched]
+
+
+@api.get("/transactions/search", response_model=HistoryOut)
+async def search_transactions(
+    user=Depends(get_current_user), store_id: str = Query(...),
+    marketplace: Optional[str] = None, currency: Optional[str] = None,
+    view: Literal["orders", "payouts"] = "orders", search: str = Query("", max_length=200),
+    category: Optional[str] = None, start_date: Optional[calendar_date] = None, end_date: Optional[calendar_date] = None,
+    outcome: Literal["all", "profit", "loss"] = "all", page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+):
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(422, "Başlangıç tarihi bitiş tarihinden sonra olamaz")
+    scope = {"user_id": user["id"], "store_id": store_id}
+    if marketplace and marketplace != "ALL": scope["marketplace"] = marketplace
+    if currency and currency != "ALL": scope["currency"] = currency
+    # Existing legacy category names remain searchable; the UI shows current categories.
+    if category and len(category) > 200:
+        raise HTTPException(422, "Geçersiz işlem türü")
+    result = await search_history(db, scope, view, search, category, start_date.isoformat() if start_date else None,
+                                  end_date.isoformat() if end_date else None, outcome, page, page_size)
+    return HistoryOut(**{**result, "items": [TransactionOut(**row) for row in result["items"]]})
+
+
+@api.patch("/payouts/{tx_id}/reference", response_model=TransactionOut)
+async def update_payment_reference(tx_id: str, data: PaymentReferenceIn, user=Depends(get_current_user)):
+    doc = await db.transactions.find_one_and_update(
+        {"id": tx_id, "user_id": user["id"], "type": "payout"}, {"$set": data.model_dump()},
+        return_document=True, projection={"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "Ödeme kaydı bulunamadı")
+    return TransactionOut(**await attach_usd(db, doc))
 
 
 @api.patch("/transactions/{tx_id}/costs", response_model=TransactionOut)
@@ -522,6 +580,7 @@ async def startup():
     await db.login_attempts.create_index("expires_at", expireAfterSeconds=0)
     await db.stores.create_index("user_id")
     await db.transactions.create_index([("user_id", 1), ("date", -1)])
+    await db.transactions.create_index([("user_id", 1), ("store_id", 1), ("type", 1), ("date", -1)])
     await db.transactions.create_index([("user_id", 1), ("store_id", 1), ("source_fingerprint", 1)], unique=True,
                                        partialFilterExpression={"source_fingerprint": {"$type": "string"}})
 

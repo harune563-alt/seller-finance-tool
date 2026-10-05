@@ -5,7 +5,7 @@ export const groupOrders = rows => {
   const groups = new Map();
   for (const row of rows) {
     const orderId = (row.order_id || "").trim();
-    const key = JSON.stringify([row.store_id, row.marketplace, row.currency, orderId || row.id]);
+    const key = JSON.stringify([row.store_id, row.marketplace, row.currency, orderId ? "order" : "single", orderId || row.id]);
     if (!groups.has(key)) groups.set(key, { id: row.id, orderId, marketplace: row.marketplace, currency: row.currency, date: row.date, records: [], revenueCents: 0, expenseCents: 0, recoveredCents: 0, costsCents: 0, incomplete: false });
     const group = groups.get(key);
     group.records.push(row);

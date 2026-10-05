@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-05",
+  "status": "passed",
+  "feature": "Order ID history filters and separate payout payment references",
+  "backend_tests": {"new_search_reference_tests_passed": 11, "existing_finance_tests_passed": 11, "failed": 0},
+  "reports": ["/app/test_reports/iteration_5.json", "/app/test_reports/pytest/pytest_results_iter5_backend.xml", "/app/test_reports/pytest/pytest_results_iter5_regression.xml"],
+  "frontend": {
+    "tested": ["Order partial search, date/category intersections and full-order totals", "Payout reference create/edit/clear/search and legacy note search", "Filtered delete and counts", "Source marketplace CA and ALL, source currency and store changes reset filters", "Responsive320/390/768/1024/1440 without document overflow"],
+    "resolved_report_uncertainty": "Top-right Sonner notification was covering marketplace-switcher. Reproduced with elementFromPoint; moved Toaster bottom-right. All reset paths now pass with the login notification still visible.",
+    "self_test_evidence": "/root/.emergent/automation_output/20261005_181730/console_20261005_181730.log"
+  },
+  "build": "Compiled successfully without warnings; /app/test_reports/history-filters-build.log",
+  "data_safety": "Temporary test stores cleaned by testing agent; existing user records untouched by main self-test",
+  "mocked_apis": [],
+  "future": ["Saved filter presets", "High-volume Mongo aggregation optimization"]
+}

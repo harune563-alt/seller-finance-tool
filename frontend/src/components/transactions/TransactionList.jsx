@@ -24,11 +24,11 @@ const TransactionDetail = ({ row: r, onEdit, onDelete }) => {
   </div>;
 };
 
-export const TransactionList = ({ rows, loading, filter, onEdit, onDelete }) => {
+export const TransactionList = ({ rows, total, loading, filter, onEdit, onDelete }) => {
   const [expanded, setExpanded] = useState({});
   const groups = useMemo(() => groupOrders(rows).filter(g => filter === "all" || (filter === "profit" ? g.net > 0 : g.net < 0)), [rows, filter]);
   return <section data-testid="tx-records" className="space-y-4">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-display font-bold text-lg" data-testid="tx-record-count">İşlem Kayıtları ({groups.length})</h2><span className="text-xs text-slate-500" data-testid="order-margin-definition">USD · Kâr/Zarar % = Net sonuç / Gelirin USD karşılığı</span></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-display font-bold text-lg" data-testid="tx-record-count">İşlem Kayıtları ({groups.length} / {total ?? groups.length})</h2><span className="text-xs text-slate-500" data-testid="order-margin-definition">USD · Siparişin tüm hareketleri · Kâr/Zarar % = Net sonuç / Gelirin USD karşılığı</span></div>
     <div className="space-y-3" data-testid="tx-table-body">
       {loading && <p className="text-sm text-slate-500 py-8 text-center" data-testid="tx-loading">Yükleniyor…</p>}
       {!loading && !groups.length && <p className="text-sm text-slate-500 py-8 text-center border border-dashed rounded-lg" data-testid="tx-empty">Bu görünümde kayıt yok</p>}

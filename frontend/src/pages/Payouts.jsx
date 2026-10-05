@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useStore } from "@/contexts/StoreContext";
-import { MP_BY_CODE, formatMoney } from "@/constants/marketplaces";
+import { MP_BY_CODE } from "@/constants/marketplaces";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,12 +9,16 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Trash2, Wallet, Plus } from "lucide-react";
+import { Wallet, Plus } from "lucide-react";
 import { toast } from "sonner";
 import KpiCard from "@/components/KpiCard";
 import { FinanceCurrency } from "@/components/FinanceCurrency";
 import { useFormMarketplace } from "@/hooks/useFormMarketplace";
 import { MissingFxAlert, NativeBalances, formatUsd } from "@/components/FxStatus";
+import { useRecordSearch } from "@/hooks/useRecordSearch";
+import { RecordFilters, RecordPagination } from "@/components/RecordFilters";
+import { PayoutHistory } from "@/components/payouts/PayoutHistory";
+import { PaymentReferenceDialog } from "@/components/payouts/PaymentReferenceDialog";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -23,29 +27,29 @@ const STATUSES = ["Oluşturuldu", "İşleniyor", "Bankada"];
 export default function Payouts() {
   const { activeStore, activeStoreId, activeMarketplace } = useStore();
   const { marketplace, currency: formCurrency, selectMarketplace } = useFormMarketplace();
-  const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
   const [selectedCurrency, setSelectedCurrency] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
+  const [editingReference, setEditingReference] = useState(null);
+  const history = useRecordSearch({ storeId: activeStoreId, marketplace: activeMarketplace, currency: selectedCurrency, view: "payouts", revision });
   const [form, setForm] = useState({
     amount: "",
-    date: todayISO(), description: "", category: STATUSES[0],
+    date: todayISO(), description: "", category: STATUSES[0], payment_reference: "",
   });
 
   const fetchData = () => setRevision(v => v + 1);
-  useEffect(() => { setSelectedCurrency(""); }, [activeStoreId, activeMarketplace]);
+  useEffect(() => { setSelectedCurrency(""); setEditingReference(null); }, [activeStoreId, activeMarketplace]);
   useEffect(() => {
     let current = true;
-    setRows([]); setSummary(null); setError("");
+    setSummary(null); setError("");
     if (!activeStoreId) return;
     const params = { store_id: activeStoreId, marketplace: activeMarketplace, ...(selectedCurrency ? { currency: selectedCurrency } : {}) };
     (async () => {
       try {
         const s = await api.get("/dashboard/summary", { params });
-        const t = await api.get("/transactions", { params: { ...params, type: "payout" } });
-        if (current) { setRows(t.data); setSummary(s.data); }
+        if (current) setSummary(s.data);
       } catch { if (current) setError("Ödemeler yüklenemedi."); }
     })();
     return () => { current = false; };
@@ -60,7 +64,7 @@ export default function Payouts() {
     try {
       await api.post("/transactions", { store_id: activeStoreId, type: "payout", ...form, marketplace, currency: formCurrency, amount: Number(form.amount) });
       toast.success("Ödeme kaydı eklendi");
-      setForm((f) => ({ ...f, amount: "", description: "" })); fetchData();
+      setForm((f) => ({ ...f, amount: "", description: "", payment_reference: "" })); fetchData();
     } catch (err) { const detail = err.response?.data?.detail; setError(typeof detail === "string" ? detail : "Ödeme kaydedilemedi."); }
     finally { setSaving(false); }
   };
@@ -125,7 +129,11 @@ export default function Payouts() {
             </SelectContent>
           </Select>
         </div>
-        <div className="md:col-span-2 lg:col-span-3">
+        <div>
+          <Label htmlFor="payout-reference">Ödeme Referansı (isteğe bağlı)</Label>
+          <Input id="payout-reference" value={form.payment_reference} maxLength={200} onChange={e => setForm({ ...form, payment_reference: e.target.value })} placeholder="Örn. TRANSFER-2026-001" data-testid="payout-reference-input" className="mt-1" />
+        </div>
+        <div className="lg:col-span-2">
           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-600">Not</Label>
           <Textarea rows={1} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
                     data-testid="payout-note-input" className="mt-1" />
@@ -138,55 +146,10 @@ export default function Payouts() {
         </div>
       </form>
 
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-200">
-          <h2 className="font-display text-lg font-bold text-slate-900">Ödeme Geçmişi ({rows.length})</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
-              <tr>
-                <th className="text-left px-6 py-3 font-semibold">Tarih</th>
-                <th className="text-left px-4 py-3 font-semibold">Pazar</th>
-                <th className="text-left px-4 py-3 font-semibold">Durum</th>
-                <th className="text-left px-4 py-3 font-semibold">Not</th>
-                <th className="text-right px-4 py-3 font-semibold">Tutar</th>
-                <th className="text-right px-6 py-3 font-semibold">—</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {rows.length === 0 && (
-                <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-400">Ödeme kaydı yok</td></tr>
-              )}
-              {rows.map((r) => {
-                const mp = MP_BY_CODE[r.marketplace];
-                return (
-                  <tr key={r.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-3 font-mono-num text-slate-700">{r.date}</td>
-                    <td className="px-4 py-3">{mp?.flag} {r.marketplace}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
-                        {r.category}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 max-w-[320px] truncate">{r.description || "—"}</td>
-                    <td className="px-4 py-3 text-right font-mono-num font-bold text-orange-600">
-                      {formatMoney(r.amount, r.currency)}
-                    </td>
-                    <td className="px-6 py-3 text-right">
-                      <Button variant="ghost" size="icon" onClick={() => remove(r.id)}
-                              data-testid={`delete-payout-${r.id}`}
-                              className="text-slate-400 hover:text-rose-600 hover:bg-rose-50">
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <RecordFilters history={history} prefix="payout" searchLabel="Ödeme referansı veya not" categoryLabel="Ödeme Durumu" options={STATUSES} unit="ödeme" />
+      <PayoutHistory history={history} onEditReference={setEditingReference} onDelete={remove} />
+      <RecordPagination history={history} prefix="payout" />
+      {editingReference && <PaymentReferenceDialog key={editingReference.id} row={editingReference} onClose={() => setEditingReference(null)} onSaved={fetchData} />}
     </div>
   );
 }

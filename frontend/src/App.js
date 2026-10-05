@@ -30,7 +30,7 @@ function App() {
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-          <Toaster position="top-right" richColors />
+          <Toaster position="bottom-right" richColors />
         </BrowserRouter>
       </StoreProvider>
     </AuthProvider>
