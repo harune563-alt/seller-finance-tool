@@ -9,7 +9,7 @@ export default function KpiCard({ label, value, hint, icon: Icon, accent = "slat
   };
   const a = accents[accent] || accents.slate;
   return (
-    <div className="kpi-card" data-testid={testId}>
+    <div className="kpi-card min-w-0" data-testid={testId}>
       <div className="flex items-start justify-between">
         <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
           {label}
@@ -20,7 +20,7 @@ export default function KpiCard({ label, value, hint, icon: Icon, accent = "slat
           </div>
         )}
       </div>
-      <div className="mt-3 font-mono-num text-2xl sm:text-3xl font-extrabold text-slate-900">
+      <div className="mt-3 font-mono-num text-2xl font-extrabold text-slate-900 break-all" data-testid={`${testId}-value`}>
         {value}
       </div>
       {hint && <div className="mt-1 text-xs text-slate-500">{hint}</div>}

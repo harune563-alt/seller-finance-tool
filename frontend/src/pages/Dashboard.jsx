@@ -1,13 +1,14 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { useStore } from "@/contexts/StoreContext";
 import { MP_BY_CODE, formatMoney } from "@/constants/marketplaces";
 import KpiCard from "@/components/KpiCard";
+import { FinanceCurrency } from "@/components/FinanceCurrency";
 import { Button } from "@/components/ui/button";
 import {
   TrendingUp, TrendingDown, DollarSign, Percent, Wallet, Receipt,
-  Sparkles, Store as StoreIcon,
+  Store as StoreIcon,
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -21,30 +22,32 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedCurrency, setSelectedCurrency] = useState("");
+  const [error, setError] = useState("");
 
-  const currency = useMemo(() => {
-    if (activeMarketplace && activeMarketplace !== "ALL") return MP_BY_CODE[activeMarketplace]?.currency || "USD";
-    return activeStore?.default_currency || "USD";
-  }, [activeMarketplace, activeStore]);
+  const currency = summary?.currency || MP_BY_CODE[activeMarketplace]?.currency || activeStore?.default_currency;
+  useEffect(() => { setSelectedCurrency(""); }, [activeMarketplace, activeStoreId]);
 
   useEffect(() => {
+    let current = true;
+    setSummary(null); setRecent([]); setError("");
     if (!activeStoreId) { setLoading(false); return; }
     (async () => {
       setLoading(true);
       try {
-        const params = { store_id: activeStoreId };
+        const params = { store_id: activeStoreId, ...(selectedCurrency ? { currency: selectedCurrency } : {}) };
         if (activeMarketplace !== "ALL") params.marketplace = activeMarketplace;
-        const [s, t] = await Promise.all([
-          api.get("/dashboard/summary", { params }),
-          api.get("/transactions", { params: { ...params, limit: 8 } }),
-        ]);
-        setSummary(s.data);
-        setRecent(t.data);
+        const s = await api.get("/dashboard/summary", { params });
+        const t = await api.get("/transactions", { params: { ...params, currency: s.data.currency, limit: 8 } });
+        if (current) { setSummary(s.data); setRecent(t.data); }
+      } catch {
+        if (current) setError("Özet yüklenemedi. Lütfen tekrar deneyin.");
       } finally {
-        setLoading(false);
+        if (current) setLoading(false);
       }
     })();
-  }, [activeStoreId, activeMarketplace]);
+    return () => { current = false; };
+  }, [activeStoreId, activeMarketplace, selectedCurrency]);
 
   if (!stores.length) {
     return (
@@ -56,7 +59,7 @@ export default function Dashboard() {
         <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
           Takibe başlamak için bir Amazon satıcı mağazası ekle ve içine satış yaptığın pazar yerlerini seç.
         </p>
-        <Link to="/stores">
+        <Link to="/stores" data-testid="dashboard-create-store-link">
           <Button data-testid="empty-create-store-btn" className="mt-6 bg-slate-900 hover:bg-slate-800 text-white rounded-xl">
             Mağaza Ekle
           </Button>
@@ -83,13 +86,13 @@ export default function Dashboard() {
             {activeStore?.name} · {activeMarketplace === "ALL" ? "Tüm Pazarlar" : `${MP_BY_CODE[activeMarketplace]?.flag} ${MP_BY_CODE[activeMarketplace]?.name}`}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Link to="/transactions">
+        <div className="flex gap-2 flex-wrap">
+          <Link to="/transactions" data-testid="dashboard-transactions-link">
             <Button variant="outline" className="rounded-xl bg-white" data-testid="quick-add-income">
               <Receipt className="w-4 h-4 mr-2" /> Gelir / Gider Ekle
             </Button>
           </Link>
-          <Link to="/payouts">
+          <Link to="/payouts" data-testid="dashboard-payouts-link">
             <Button className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl" data-testid="quick-add-payout">
               <Wallet className="w-4 h-4 mr-2" /> Amazon Ödemesi
             </Button>
@@ -97,21 +100,23 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <FinanceCurrency summary={summary} value={selectedCurrency} onChange={setSelectedCurrency} prefix="dashboard" />
+      {error && <p role="alert" data-testid="dashboard-error" className="text-sm text-rose-600">{error}</p>}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
         <KpiCard testId="kpi-revenue" label="Toplam Satış" accent="emerald" icon={TrendingUp}
                  value={formatMoney(kpis.revenue, currency)} hint="Gelir toplamı" />
         <KpiCard testId="kpi-expenses" label="Toplam Gider" accent="rose" icon={TrendingDown}
-                 value={formatMoney(kpis.expenses, currency)} hint="FBA, PPC, COGS vb." />
+                 value={formatMoney(kpis.expenses, currency)} hint="İadeler, ücretler, net maliyetler" />
         <KpiCard testId="kpi-net-profit" label="Net Kar" accent="indigo" icon={DollarSign}
                  value={formatMoney(kpis.net_profit, currency)} hint="Gelir − Gider" />
         <KpiCard testId="kpi-margin" label="Kar Marjı" accent="amber" icon={Percent}
                  value={`${(kpis.margin || 0).toFixed(1)}%`} hint="Net Kar / Gelir" />
         <KpiCard testId="kpi-amazon-balance" label="Amazon Bakiye" accent="amazon" icon={Wallet}
-                 value={formatMoney(kpis.amazon_balance, currency)} hint="Bekleyen (çekilmemiş)" />
+                 value={formatMoney(kpis.amazon_balance, currency)} hint="Tahmini · rezervler hariç" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6">
+        <div className="min-w-0 lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-display text-lg font-bold text-slate-900">Gelir ve Kar Trendi</h2>
             <span className="text-xs text-slate-500 font-mono-num">Aylık</span>
@@ -122,7 +127,7 @@ export default function Dashboard() {
             ) : trendData.length === 0 ? (
               <div className="h-full flex items-center justify-center text-sm text-slate-400">Henüz veri yok</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 320, height: 288 }}>
                 <AreaChart data={trendData}>
                   <defs>
                     <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
@@ -147,13 +152,13 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-6">
+        <div className="min-w-0 bg-white border border-slate-200 rounded-2xl p-6">
           <h2 className="font-display text-lg font-bold text-slate-900 mb-4">Pazar Yeri Dağılımı</h2>
           <div className="h-72">
             {pieData.length === 0 ? (
               <div className="h-full flex items-center justify-center text-sm text-slate-400">Veri yok</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 320, height: 288 }}>
                 <PieChart>
                   <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={95} paddingAngle={3}>
                     {pieData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
@@ -168,13 +173,13 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white border border-slate-200 rounded-2xl p-6">
+        <div className="min-w-0 bg-white border border-slate-200 rounded-2xl p-6">
           <h2 className="font-display text-lg font-bold text-slate-900 mb-4">Gider Kategorileri</h2>
           <div className="h-64">
             {catData.length === 0 ? (
               <div className="h-full flex items-center justify-center text-sm text-slate-400">Veri yok</div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 320, height: 256 }}>
                 <BarChart data={catData} layout="vertical" margin={{ left: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
                   <XAxis type="number" stroke="#64748B" fontSize={11} />
@@ -190,7 +195,7 @@ export default function Dashboard() {
         <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6" data-testid="recent-transactions">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-display text-lg font-bold text-slate-900">Son İşlemler</h2>
-            <Link to="/transactions" className="text-xs font-semibold text-emerald-600 hover:underline">
+            <Link to="/transactions" data-testid="dashboard-all-transactions" className="text-xs font-semibold text-emerald-600 hover:underline">
               Tümünü gör →
             </Link>
           </div>
@@ -230,14 +235,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-5 flex items-start gap-3">
-        <Sparkles className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-        <div className="text-sm text-slate-600">
-          <span className="font-semibold text-slate-900">İpucu:</span>{" "}
-          CSV import ile Amazon rapor dosyalarını yükleyebilirsin. Gerekli sütunlar:{" "}
-          <code className="font-mono-num bg-slate-100 px-1.5 py-0.5 rounded">date, amount, marketplace, category, currency, order_id, sku, description</code>.
-        </div>
-      </div>
     </div>
   );
 }

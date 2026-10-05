@@ -1,7 +1,7 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useStore } from "@/contexts/StoreContext";
-import { MARKETPLACES, MP_BY_CODE } from "@/constants/marketplaces";
+import { MP_BY_CODE } from "@/constants/marketplaces";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -40,8 +40,8 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Top bar */}
-      <header className="h-16 border-b border-slate-200 bg-white sticky top-0 z-40">
-        <div className="max-w-[1600px] mx-auto h-full px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4">
+      <header className="min-h-16 border-b border-slate-200 bg-white sticky top-0 z-40">
+        <div className="max-w-[1600px] mx-auto min-h-16 py-3 px-4 sm:px-6 lg:px-8 flex flex-wrap items-center justify-between gap-3">
           <Link to="/" className="flex items-center gap-2" data-testid="brand-logo">
             <div className="w-9 h-9 rounded-xl bg-slate-900 flex items-center justify-center">
               <span className="text-amber-400 font-display text-xl font-extrabold leading-none">a</span>
@@ -52,9 +52,9 @@ export default function Layout() {
             </div>
           </Link>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center flex-wrap gap-2 min-w-0">
             {/* Store Switcher */}
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="gap-2 bg-white" data-testid="store-switcher-dropdown">
                   <StoreIcon className="w-4 h-4 text-slate-500" />
@@ -64,7 +64,7 @@ export default function Layout() {
                   <ChevronDown className="w-4 h-4 text-slate-400" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-white w-56">
+              <DropdownMenuContent data-testid="store-switcher-options" align="end" className="bg-white w-56">
                 <DropdownMenuLabel>Mağazalarım</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {stores.length === 0 && (
@@ -88,7 +88,7 @@ export default function Layout() {
             </DropdownMenu>
 
             {/* Marketplace Switcher */}
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="gap-2 bg-white" data-testid="marketplace-switcher">
                   <Globe className="w-4 h-4 text-slate-500" />
@@ -100,7 +100,7 @@ export default function Layout() {
                   <ChevronDown className="w-4 h-4 text-slate-400" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-white w-56 max-h-[380px] overflow-y-auto">
+              <DropdownMenuContent data-testid="marketplace-switcher-options" align="end" className="bg-white w-56 max-h-[380px] overflow-y-auto">
                 <DropdownMenuLabel>Pazar Yeri</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {availableMps.map((code) => {
@@ -131,7 +131,7 @@ export default function Layout() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="gap-2" data-testid="user-menu-btn">
                   <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center text-sm font-semibold">
@@ -139,7 +139,7 @@ export default function Layout() {
                   </div>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="bg-white w-52">
+              <DropdownMenuContent data-testid="user-menu-options" align="end" className="bg-white w-52">
                 <DropdownMenuLabel>
                   <div className="font-semibold truncate">{user?.name}</div>
                   <div className="text-xs text-slate-500 truncate">{user?.email}</div>
@@ -156,7 +156,7 @@ export default function Layout() {
 
       {/* Secondary Nav */}
       <nav className="bg-slate-900 border-b border-slate-800">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-1 overflow-x-auto">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center gap-1">
           {nav.map((item) => {
             const Icon = item.icon;
             return (
@@ -166,7 +166,7 @@ export default function Layout() {
                 end={item.to === "/"}
                 data-testid={item.testId}
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+                  `flex items-center gap-2 px-2 sm:px-4 py-3 text-xs sm:text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
                     isActive
                       ? "text-amber-400 border-amber-400"
                       : "text-slate-300 border-transparent hover:text-white hover:border-slate-500"
@@ -182,7 +182,7 @@ export default function Layout() {
       </nav>
 
       {/* Content */}
-      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="max-w-[1600px] min-w-0 mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Outlet />
       </main>
     </div>

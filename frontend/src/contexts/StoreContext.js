@@ -16,15 +16,13 @@ export const StoreProvider = ({ children }) => {
     try {
       const { data } = await api.get("/stores");
       setStores(data);
-      if (data.length && !data.find((s) => s.id === activeStoreId)) {
-        setActiveStoreId(data[0].id);
-      }
+      setActiveStoreId(current => data.some(s => s.id === current) ? current : data[0]?.id || "");
     } catch (e) {
       // ignore
     } finally {
       setLoading(false);
     }
-  }, [user, activeStoreId]);
+  }, [user]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -36,6 +34,12 @@ export const StoreProvider = ({ children }) => {
   }, [activeMarketplace]);
 
   const activeStore = stores.find((s) => s.id === activeStoreId) || null;
+
+  useEffect(() => {
+    if (activeStore && activeMarketplace !== "ALL" && !activeStore.marketplaces.includes(activeMarketplace)) {
+      setActiveMarketplace("ALL");
+    }
+  }, [activeStore, activeMarketplace]);
 
   return (
     <StoreContext.Provider value={{

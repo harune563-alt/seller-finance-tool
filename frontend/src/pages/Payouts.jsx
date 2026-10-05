@@ -12,6 +12,8 @@ import {
 import { Trash2, Wallet, Plus } from "lucide-react";
 import { toast } from "sonner";
 import KpiCard from "@/components/KpiCard";
+import { FinanceCurrency } from "@/components/FinanceCurrency";
+import { useFormMarketplace } from "@/hooks/useFormMarketplace";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -19,60 +21,57 @@ const STATUSES = ["Oluşturuldu", "İşleniyor", "Bankada"];
 
 export default function Payouts() {
   const { activeStore, activeStoreId, activeMarketplace } = useStore();
+  const { marketplace, currency: formCurrency, selectMarketplace } = useFormMarketplace();
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
+  const [selectedCurrency, setSelectedCurrency] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [revision, setRevision] = useState(0);
   const [form, setForm] = useState({
-    marketplace: "US", amount: "", currency: "USD",
+    amount: "",
     date: todayISO(), description: "", category: STATUSES[0],
   });
 
-  const fetchData = async () => {
+  const fetchData = () => setRevision(v => v + 1);
+  useEffect(() => { setSelectedCurrency(""); }, [activeStoreId, activeMarketplace]);
+  useEffect(() => {
+    let current = true;
+    setRows([]); setSummary(null); setError("");
     if (!activeStoreId) return;
-    const params = { store_id: activeStoreId };
-    if (activeMarketplace !== "ALL") params.marketplace = activeMarketplace;
-    const [t, s] = await Promise.all([
-      api.get("/transactions", { params: { ...params, type: "payout" } }),
-      api.get("/dashboard/summary", { params }),
-    ]);
-    setRows(t.data);
-    setSummary(s.data);
-  };
-
-  useEffect(() => { fetchData(); /* eslint-disable-next-line */ }, [activeStoreId, activeMarketplace]);
-
-  useEffect(() => {
-    const info = MP_BY_CODE[form.marketplace];
-    if (info) setForm((f) => ({ ...f, currency: info.currency }));
-  }, [form.marketplace]);
-
-  useEffect(() => {
-    if (activeStore?.marketplaces?.length) {
-      const first = activeMarketplace !== "ALL" ? activeMarketplace : activeStore.marketplaces[0];
-      setForm((f) => ({ ...f, marketplace: first }));
-    }
-  }, [activeStore, activeMarketplace]);
+    const params = { store_id: activeStoreId, marketplace: activeMarketplace, ...(selectedCurrency ? { currency: selectedCurrency } : {}) };
+    (async () => {
+      try {
+        const s = await api.get("/dashboard/summary", { params });
+        const t = await api.get("/transactions", { params: { ...params, currency: s.data.currency, type: "payout" } });
+        if (current) { setRows(t.data); setSummary(s.data); }
+      } catch { if (current) setError("Ödemeler yüklenemedi."); }
+    })();
+    return () => { current = false; };
+  }, [activeStoreId, activeMarketplace, selectedCurrency, revision]);
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!activeStoreId) return;
-    await api.post("/transactions", {
-      store_id: activeStoreId, type: "payout",
-      ...form, amount: parseFloat(form.amount),
-    });
-    toast.success("Ödeme kaydı eklendi");
-    setForm((f) => ({ ...f, amount: "", description: "" }));
-    fetchData();
+    setError("");
+    if (!activeStoreId || !activeStore?.marketplaces.includes(marketplace)) { setError("Geçerli mağaza ve pazar yeri seçin."); return; }
+    if (!form.date || !Number.isFinite(Number(form.amount)) || Number(form.amount) <= 0) { setError("Tarih ve sıfırdan büyük bir tutar girin."); return; }
+    setSaving(true);
+    try {
+      await api.post("/transactions", { store_id: activeStoreId, type: "payout", ...form, marketplace, currency: formCurrency, amount: Number(form.amount) });
+      toast.success("Ödeme kaydı eklendi");
+      setForm((f) => ({ ...f, amount: "", description: "" })); fetchData();
+    } catch (err) { const detail = err.response?.data?.detail; setError(typeof detail === "string" ? detail : "Ödeme kaydedilemedi."); }
+    finally { setSaving(false); }
   };
 
   const remove = async (id) => {
-    await api.delete(`/transactions/${id}`);
-    toast.success("Ödeme silindi");
-    fetchData();
+    try { await api.delete(`/transactions/${id}`); toast.success("Ödeme silindi"); fetchData(); }
+    catch { toast.error("Ödeme silinemedi"); }
   };
 
-  const currency = activeMarketplace !== "ALL"
+  const currency = summary?.currency || (activeMarketplace !== "ALL"
     ? MP_BY_CODE[activeMarketplace]?.currency || "USD"
-    : activeStore?.default_currency || "USD";
+    : activeStore?.default_currency || "USD");
 
   return (
     <div className="space-y-6" data-testid="payouts-page">
@@ -81,10 +80,11 @@ export default function Payouts() {
         <p className="text-sm text-slate-500 mt-1">Amazon'dan hesabına gelen disbursement (ödeme) tutarlarını kaydet, bekleyen bakiyeni takip et.</p>
       </div>
 
+      <FinanceCurrency summary={summary} value={selectedCurrency} onChange={setSelectedCurrency} prefix="payout" />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard testId="pk-balance" label="Bekleyen Amazon Bakiye" accent="amazon" icon={Wallet}
                  value={formatMoney(summary?.amazon_balance || 0, currency)}
-                 hint="Henüz hesaba yatmayan tutar" />
+                 hint="Tahmini · rezervler hariç" />
         <KpiCard testId="pk-received" label="Toplam Alınan Ödeme" accent="emerald" icon={Wallet}
                  value={formatMoney(summary?.payouts_received || 0, currency)}
                  hint="Hesaba düşen toplam" />
@@ -93,7 +93,8 @@ export default function Payouts() {
                  hint="Gelir − Gider" />
       </div>
 
-      <form onSubmit={submit} className="bg-white border border-slate-200 rounded-2xl p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {error && <p role="alert" data-testid="payout-form-error" className="text-sm text-rose-700">{error}</p>}
+      <form onSubmit={submit} noValidate className="bg-white border border-slate-200 rounded-2xl p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div>
           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-600">Ödeme Tarihi</Label>
           <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })}
@@ -101,28 +102,28 @@ export default function Payouts() {
         </div>
         <div>
           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-600">Pazar Yeri</Label>
-          <Select value={form.marketplace} onValueChange={(v) => setForm({ ...form, marketplace: v })}>
+          <Select value={marketplace} onValueChange={selectMarketplace}>
             <SelectTrigger data-testid="payout-marketplace-select" className="mt-1"><SelectValue /></SelectTrigger>
-            <SelectContent className="bg-white">
+            <SelectContent className="bg-white" data-testid="payout-marketplace-options">
               {(activeStore?.marketplaces || []).map((c) => {
                 const m = MP_BY_CODE[c];
-                return <SelectItem key={c} value={c}>{m?.flag} {m?.name}</SelectItem>;
+                return <SelectItem key={c} value={c} data-testid={`payout-marketplace-${c.toLowerCase()}`}>{m?.flag} {m?.name}</SelectItem>;
               })}
             </SelectContent>
           </Select>
         </div>
         <div>
-          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-600">Tutar ({form.currency})</Label>
-          <Input type="number" step="0.01" value={form.amount}
+          <Label className="text-xs font-semibold uppercase tracking-wider text-slate-600">Tutar ({formCurrency})</Label>
+          <Input type="number" step="0.01" min="0.01" value={form.amount}
                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
                  required data-testid="payout-amount-input" className="mt-1 font-mono-num" />
         </div>
         <div>
           <Label className="text-xs font-semibold uppercase tracking-wider text-slate-600">Durum</Label>
-          <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
+          <Select value={form.category} onValueChange={(v) => { if (STATUSES.includes(v)) setForm({ ...form, category: v }); }}>
             <SelectTrigger data-testid="payout-status-select" className="mt-1"><SelectValue /></SelectTrigger>
-            <SelectContent className="bg-white">
-              {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            <SelectContent className="bg-white" data-testid="payout-status-options">
+              {STATUSES.map((s, i) => <SelectItem key={s} value={s} data-testid={`payout-status-${i}`}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -132,9 +133,9 @@ export default function Payouts() {
                     data-testid="payout-note-input" className="mt-1" />
         </div>
         <div className="lg:col-span-1 flex items-end">
-          <Button type="submit" data-testid="payout-submit-button"
+          <Button type="submit" data-testid="payout-submit-button" disabled={saving || !activeStoreId}
                   className="w-full bg-orange-600 hover:bg-orange-700 text-white rounded-xl">
-            <Plus className="w-4 h-4 mr-1" /> Ödeme Kaydet
+            <Plus className="w-4 h-4 mr-1" /> {saving ? "Kaydediliyor…" : "Ödeme Kaydet"}
           </Button>
         </div>
       </form>

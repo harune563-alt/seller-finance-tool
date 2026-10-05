@@ -5,20 +5,25 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
-import io
+import json
 import csv
 import uuid
 import logging
 import bcrypt
 import jwt
-import pandas as pd
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date as calendar_date
 from typing import List, Optional, Literal
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Query
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
+from pymongo import UpdateOne
+from finance import COST_FIELDS, RECOVERY_FIELDS, CATEGORIES, money, summarize
+from amazon_csv import parse_amazon_csv
+from auth_security import check_login_limit, record_login_failure
+from starlette.responses import JSONResponse
+from proxy_origin import OriginAliasMiddleware
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -32,6 +37,12 @@ db = client[os.environ['DB_NAME']]
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGO = "HS256"
+CORS_ORIGINS = [origin.strip().rstrip("/") for origin in os.environ["CORS_ORIGINS"].split(",") if origin.strip()]
+CORS_ORIGIN_ALIASES = json.loads(os.environ["CORS_ORIGIN_ALIASES"])
+if not CORS_ORIGINS or "*" in CORS_ORIGINS:
+    raise RuntimeError("CORS_ORIGINS must contain explicit trusted origins")
+if any(target not in CORS_ORIGINS for target in CORS_ORIGIN_ALIASES.values()):
+    raise RuntimeError("Origin aliases must map to an explicitly trusted origin")
 
 MARKETPLACES = {
     "US": {"name": "United States", "currency": "USD", "symbol": "$", "flag": "🇺🇸"},
@@ -116,22 +127,95 @@ class StoreOut(BaseModel):
 
 TxType = Literal["income", "expense", "payout"]
 
-class TransactionIn(BaseModel):
+class CostsIn(BaseModel):
+    product_cost: float = Field(default=0, ge=0, le=1000000000000, allow_inf_nan=False)
+    shipping_cost: float = Field(default=0, ge=0, le=1000000000000, allow_inf_nan=False)
+    extra_cost: float = Field(default=0, ge=0, le=1000000000000, allow_inf_nan=False)
+    product_cost_recovery: float = Field(default=0, ge=0, le=1000000000000, allow_inf_nan=False)
+    shipping_cost_recovery: float = Field(default=0, ge=0, le=1000000000000, allow_inf_nan=False)
+
+    @field_validator("product_cost", "shipping_cost", "extra_cost", "product_cost_recovery", "shipping_cost_recovery")
+    @classmethod
+    def round_cost(cls, value):
+        return float(money(value))
+
+
+class TransactionIn(CostsIn):
     model_config = ConfigDict(extra="ignore")
     store_id: str
     marketplace: str
     type: TxType
     category: str
-    amount: float
+    amount: float = Field(gt=0, le=1000000000000, allow_inf_nan=False)
     currency: str
     date: str  # ISO date (YYYY-MM-DD)
     description: Optional[str] = ""
     order_id: Optional[str] = ""
-    sku: Optional[str] = ""
+
+    @field_validator("date")
+    @classmethod
+    def valid_date(cls, value):
+        return calendar_date.fromisoformat(value).isoformat()
+
+    @field_validator("amount")
+    @classmethod
+    def round_amount(cls, value):
+        return float(money(value))
 
 class TransactionOut(TransactionIn):
+    amount: float = Field(allow_inf_nan=False)
     id: str
     created_at: str
+    source: str = "manual"
+
+
+class SummaryBucket(BaseModel):
+    revenue: float
+    expenses: float
+    net: float
+
+
+class MarketplaceBucket(SummaryBucket):
+    marketplace: str
+
+
+class TrendBucket(SummaryBucket):
+    month: str
+
+
+class CategoryBucket(BaseModel):
+    category: str
+    amount: float
+
+
+class SummaryOut(CostsIn):
+    revenue: float
+    expenses: float
+    net_profit: float
+    margin: float
+    amazon_balance: float
+    payouts_received: float
+    transaction_count: int
+    currency: str
+    available_currencies: List[str]
+    by_marketplace: List[MarketplaceBucket]
+    by_category: List[CategoryBucket]
+    trend: List[TrendBucket]
+
+
+class ImportIssue(BaseModel):
+    line: int
+    reason: str
+
+
+class ImportOut(BaseModel):
+    accepted: int
+    duplicates: int
+    inserted: int
+    rejected_count: int
+    issues: List[ImportIssue]
+    preview: List[TransactionOut]
+    committed: bool
 
 # ---------------------------------------------------------------------------
 # App & Router
@@ -157,11 +241,15 @@ async def register(data: RegisterIn, response: Response):
     return {"id": uid, "email": email, "name": user["name"], "token": token}
 
 @api.post("/auth/login")
-async def login(data: LoginIn, response: Response):
+async def login(data: LoginIn, response: Response, request: Request):
     email = data.email.lower()
+    identifier = f"account:{email}"
+    await check_login_limit(db, identifier)
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(data.password, user["password_hash"]):
+        await record_login_failure(db, identifier)
         raise HTTPException(status_code=401, detail="E-posta veya şifre hatalı")
+    await db.login_attempts.delete_one({"identifier": identifier})
     token = create_access_token(user["id"], email)
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
     return {"id": user["id"], "email": email, "name": user.get("name", ""), "token": token}
@@ -219,17 +307,31 @@ async def delete_store(store_id: str, user=Depends(get_current_user)):
 # ------------------ Transactions ------------------
 @api.post("/transactions", response_model=TransactionOut)
 async def create_transaction(data: TransactionIn, user=Depends(get_current_user)):
-    store = await db.stores.find_one({"id": data.store_id, "user_id": user["id"]})
+    store = await db.stores.find_one({"id": data.store_id, "user_id": user["id"]}, {"_id": 0})
     if not store:
         raise HTTPException(400, "Geçersiz mağaza")
+    if data.marketplace not in store["marketplaces"] or data.marketplace not in MARKETPLACES:
+        raise HTTPException(400, "Bu pazar yeri seçili mağazaya ait değil")
+    if data.currency != MARKETPLACES[data.marketplace]["currency"]:
+        raise HTTPException(400, "Para birimi pazar yeriyle uyuşmuyor")
+    if data.amount <= 0:
+        raise HTTPException(400, "Tutar en az 0.01 olmalıdır")
+    if data.type == "payout":
+        if data.category not in ("Oluşturuldu", "İşleniyor", "Bankada"):
+            raise HTTPException(400, "Geçersiz ödeme durumu")
+    elif CATEGORIES.get(data.category) != data.type:
+        raise HTTPException(400, "Order payments gelir; Refunds ve Service Fees gider olarak kaydedilir")
+    if data.type != "income" and any(getattr(data, key) for key in COST_FIELDS):
+        raise HTTPException(400, "Maliyetler yalnızca gelir kaydına eklenebilir")
+    if data.category != "Refunds" and any(getattr(data, key) for key in RECOVERY_FIELDS):
+        raise HTTPException(400, "Geri kazanımlar yalnızca Refunds kaydına eklenebilir")
     tid = str(uuid.uuid4())
     doc = {
         "id": tid, "user_id": user["id"], **data.model_dump(),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.transactions.insert_one(doc)
-    doc.pop("user_id", None)
-    return TransactionOut(**doc)
+    return TransactionOut(**{k: v for k, v in doc.items() if k not in ("_id", "user_id")})
 
 @api.get("/transactions", response_model=List[TransactionOut])
 async def list_transactions(
@@ -237,20 +339,41 @@ async def list_transactions(
     store_id: Optional[str] = None,
     marketplace: Optional[str] = None,
     type: Optional[str] = None,
+    currency: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: int = 500,
+    limit: int = Query(500, ge=1, le=10000),
 ):
     q = {"user_id": user["id"]}
     if store_id: q["store_id"] = store_id
     if marketplace and marketplace != "ALL": q["marketplace"] = marketplace
     if type: q["type"] = type
+    else: q["type"] = {"$in": ["income", "expense", "payout"]}
+    if currency: q["currency"] = currency
     if start_date or end_date:
         q["date"] = {}
         if start_date: q["date"]["$gte"] = start_date
         if end_date: q["date"]["$lte"] = end_date
     docs = await db.transactions.find(q, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(limit)
     return [TransactionOut(**d) for d in docs]
+
+
+@api.patch("/transactions/{tx_id}/costs", response_model=TransactionOut)
+async def update_transaction_costs(tx_id: str, data: CostsIn, user=Depends(get_current_user)):
+    existing = await db.transactions.find_one({"id": tx_id, "user_id": user["id"]}, {"_id": 0})
+    if not existing or (existing["type"] != "income" and existing["category"] != "Refunds"):
+        raise HTTPException(404, "Gelir veya iade kaydı bulunamadı")
+    if existing["type"] != "income" and any(getattr(data, key) for key in COST_FIELDS):
+        raise HTTPException(400, "İade kaydına yeni ürün/kargo maliyeti eklenemez")
+    if existing["category"] != "Refunds" and any(getattr(data, key) for key in RECOVERY_FIELDS):
+        raise HTTPException(400, "Geri kazanımlar yalnızca Refunds kaydına eklenebilir")
+    doc = await db.transactions.find_one_and_update(
+        {"id": tx_id, "user_id": user["id"]},
+        {"$set": data.model_dump()}, return_document=True, projection={"_id": 0, "user_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "İşlem bulunamadı")
+    return TransactionOut(**doc)
 
 @api.delete("/transactions/{tx_id}")
 async def delete_transaction(tx_id: str, user=Depends(get_current_user)):
@@ -260,11 +383,12 @@ async def delete_transaction(tx_id: str, user=Depends(get_current_user)):
     return {"ok": True}
 
 # ------------------ Dashboard ------------------
-@api.get("/dashboard/summary")
+@api.get("/dashboard/summary", response_model=SummaryOut)
 async def dashboard_summary(
     user=Depends(get_current_user),
     store_id: Optional[str] = None,
     marketplace: Optional[str] = None,
+    currency: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ):
@@ -276,136 +400,89 @@ async def dashboard_summary(
         if start_date: q["date"]["$gte"] = start_date
         if end_date: q["date"]["$lte"] = end_date
 
-    txs = await db.transactions.find(q, {"_id": 0, "user_id": 0}).to_list(10000)
-
-    revenue = sum(t["amount"] for t in txs if t["type"] == "income")
-    expenses = sum(t["amount"] for t in txs if t["type"] == "expense")
-    payouts = sum(t["amount"] for t in txs if t["type"] == "payout")
-    net_profit = revenue - expenses
-    margin = (net_profit / revenue * 100) if revenue > 0 else 0.0
-    # amazon balance = (revenue - expenses) - payouts_received (what's still pending on Amazon)
-    amazon_balance = (revenue - expenses) - payouts
-
-    # by marketplace
-    by_mp = {}
-    for t in txs:
-        mp = t["marketplace"]
-        if mp not in by_mp:
-            by_mp[mp] = {"revenue": 0, "expenses": 0, "net": 0}
-        if t["type"] == "income":
-            by_mp[mp]["revenue"] += t["amount"]
-        elif t["type"] == "expense":
-            by_mp[mp]["expenses"] += t["amount"]
-    for mp in by_mp:
-        by_mp[mp]["net"] = by_mp[mp]["revenue"] - by_mp[mp]["expenses"]
-
-    # by category (expenses)
-    by_cat = {}
-    for t in txs:
-        if t["type"] == "expense":
-            by_cat[t["category"]] = by_cat.get(t["category"], 0) + t["amount"]
-
-    # trend by month
-    trend = {}
-    for t in txs:
-        month = t["date"][:7] if t.get("date") else ""
-        if not month: continue
-        if month not in trend:
-            trend[month] = {"month": month, "revenue": 0, "expenses": 0, "net": 0}
-        if t["type"] == "income":
-            trend[month]["revenue"] += t["amount"]
-        elif t["type"] == "expense":
-            trend[month]["expenses"] += t["amount"]
-    trend_list = sorted(trend.values(), key=lambda x: x["month"])
-    for row in trend_list:
-        row["net"] = row["revenue"] - row["expenses"]
-
-    return {
-        "revenue": round(revenue, 2),
-        "expenses": round(expenses, 2),
-        "net_profit": round(net_profit, 2),
-        "margin": round(margin, 2),
-        "amazon_balance": round(amazon_balance, 2),
-        "payouts_received": round(payouts, 2),
-        "transaction_count": len(txs),
-        "by_marketplace": [{"marketplace": k, **v} for k, v in by_mp.items()],
-        "by_category": [{"category": k, "amount": round(v, 2)} for k, v in by_cat.items()],
-        "trend": trend_list,
-    }
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(400, "Başlangıç tarihi bitişten sonra olamaz")
+    available = sorted(await db.transactions.distinct("currency", q))
+    store = await db.stores.find_one({"id": store_id, "user_id": user["id"]}, {"_id": 0}) if store_id else None
+    default = MARKETPLACES.get(marketplace, {}).get("currency") or (store or {}).get("default_currency")
+    chosen = currency or (default if default in available else (available[0] if available else default))
+    chosen = chosen or "USD"
+    if chosen not in {mp["currency"] for mp in MARKETPLACES.values()}:
+        raise HTTPException(400, "Geçersiz para birimi")
+    q["currency"] = chosen
+    txs = await db.transactions.find(q, {"_id": 0, "user_id": 0}).to_list(None)
+    return SummaryOut(**summarize(txs), currency=chosen, available_currencies=sorted(set(available + [chosen])))
 
 # ------------------ CSV Import ------------------
-@api.post("/transactions/import")
+@api.post("/transactions/import", response_model=ImportOut)
 async def import_csv(
     file: UploadFile = File(...),
-    store_id: str = "",
-    type: str = "income",
+    store_id: str = Query(...),
+    marketplace: str = Query(...),
+    commit: bool = False,
     user=Depends(get_current_user),
 ):
-    if type not in ("income", "expense", "payout"):
-        raise HTTPException(400, "Geçersiz tür")
-    store = await db.stores.find_one({"id": store_id, "user_id": user["id"]})
+    store = await db.stores.find_one({"id": store_id, "user_id": user["id"]}, {"_id": 0})
     if not store:
         raise HTTPException(400, "Mağaza bulunamadı")
 
-    content = await file.read()
+    if marketplace not in store["marketplaces"] or marketplace not in MARKETPLACES:
+        raise HTTPException(400, "Geçerli bir pazar yeri seçin")
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(400, "CSV dosyası seçin")
+    content = await file.read(5 * 1024 * 1024 + 1)
+    await file.close()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(413, "Dosya en fazla 5 MB olabilir")
     try:
-        df = pd.read_csv(io.BytesIO(content))
-    except Exception:
-        try:
-            df = pd.read_csv(io.BytesIO(content), sep=";")
-        except Exception as e:
-            raise HTTPException(400, f"CSV okunamadı: {e}")
-
-    df.columns = [c.strip().lower() for c in df.columns]
-    required = {"date", "amount"}
-    if not required.issubset(set(df.columns)):
-        raise HTTPException(400, "CSV en az 'date' ve 'amount' sütunlarını içermelidir")
-
+        docs, issues = parse_amazon_csv(content, marketplace, MARKETPLACES[marketplace]["currency"])
+    except (ValueError, UnicodeError, csv.Error) as exc:
+        raise HTTPException(400, f"CSV okunamadı: {exc}")
+    scope = {"user_id": user["id"], "store_id": store_id}
+    fingerprints = [d["source_fingerprint"] for d in docs]
+    existing = set(await db.transactions.distinct("source_fingerprint", {**scope, "source_fingerprint": {"$in": fingerprints}}))
+    for doc in docs:
+        doc.update(scope, id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc).isoformat())
     inserted = 0
-    docs = []
-    for _, row in df.iterrows():
-        try:
-            amount = float(row.get("amount", 0))
-        except Exception:
-            continue
-        mp = str(row.get("marketplace", store.get("marketplaces", ["US"])[0])).upper()
-        if mp not in MARKETPLACES:
-            mp = store.get("marketplaces", ["US"])[0]
-        docs.append({
-            "id": str(uuid.uuid4()), "user_id": user["id"], "store_id": store_id,
-            "marketplace": mp, "type": type,
-            "category": str(row.get("category", "Diğer")),
-            "amount": amount,
-            "currency": str(row.get("currency", MARKETPLACES[mp]["currency"])).upper(),
-            "date": str(row.get("date"))[:10],
-            "description": str(row.get("description", "")),
-            "order_id": str(row.get("order_id", "")),
-            "sku": str(row.get("sku", "")),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-        inserted += 1
-    if docs:
-        await db.transactions.insert_many(docs)
-    return {"inserted": inserted}
+    if commit and docs:
+        result = await db.transactions.bulk_write([
+            UpdateOne({**scope, "source_fingerprint": d["source_fingerprint"]}, {"$setOnInsert": d}, upsert=True) for d in docs
+        ], ordered=False)
+        inserted = result.upserted_count
+    return ImportOut(accepted=len(docs), duplicates=len(docs) - inserted if commit else sum(d["source_fingerprint"] in existing for d in docs),
+                     inserted=inserted, rejected_count=len(issues), issues=issues[:100],
+                     preview=[TransactionOut(**d) for d in docs[:20]], committed=commit)
 
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
 app.include_router(api)
 
+@app.middleware("http")
+async def check_cookie_origin(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.cookies.get("access_token") and origin and origin not in CORS_ORIGINS:
+        return JSONResponse(status_code=403, content={"detail": "İzin verilmeyen istek kaynağı"})
+    return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(OriginAliasMiddleware, aliases=CORS_ORIGIN_ALIASES)
 
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
+    await db.login_attempts.create_index("identifier", unique=True)
+    await db.login_attempts.create_index("expires_at", expireAfterSeconds=0)
     await db.stores.create_index("user_id")
     await db.transactions.create_index([("user_id", 1), ("date", -1)])
+    await db.transactions.create_index([("user_id", 1), ("store_id", 1), ("source_fingerprint", 1)], unique=True,
+                                       partialFilterExpression={"source_fingerprint": {"$type": "string"}})
 
     # seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@amzsuite.com").lower()

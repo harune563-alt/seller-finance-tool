@@ -10,7 +10,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
 import { Plus, Trash2, Pencil, Store as StoreIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -23,7 +23,7 @@ export default function Stores() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: "", marketplaces: ["US"], default_currency: "USD" });
 
-  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { refresh(); }, [refresh]);
 
   const openCreate = () => {
     setEditing(null);
@@ -87,9 +87,10 @@ export default function Stores() {
               <Plus className="w-4 h-4 mr-1" /> Yeni Mağaza
             </Button>
           </DialogTrigger>
-          <DialogContent className="bg-white max-w-2xl">
+          <DialogContent className="bg-white max-w-2xl" data-testid="store-dialog">
             <DialogHeader>
               <DialogTitle>{editing ? "Mağaza Düzenle" : "Yeni Mağaza"}</DialogTitle>
+              <DialogDescription>Mağaza ve aktif pazar yerleri</DialogDescription>
             </DialogHeader>
             <form onSubmit={submit} className="space-y-4">
               <div>
@@ -101,8 +102,8 @@ export default function Stores() {
                 <Label className="text-xs font-semibold uppercase tracking-wider text-slate-600">Varsayılan Para Birimi</Label>
                 <Select value={form.default_currency} onValueChange={(v) => setForm({ ...form, default_currency: v })}>
                   <SelectTrigger className="mt-1" data-testid="store-currency-select"><SelectValue /></SelectTrigger>
-                  <SelectContent className="bg-white">
-                    {CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  <SelectContent className="bg-white" data-testid="store-currency-options">
+                    {CURRENCIES.map((c) => <SelectItem key={c} value={c} data-testid={`store-currency-${c.toLowerCase()}`}>{c}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -118,7 +119,7 @@ export default function Stores() {
                              className={`flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer transition-colors ${
                                checked ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-300"
                              }`}>
-                        <Checkbox checked={checked} onCheckedChange={() => toggleMp(m.code)} />
+                        <Checkbox checked={checked} onCheckedChange={() => toggleMp(m.code)} data-testid={`store-marketplace-checkbox-${m.code.toLowerCase()}`} />
                         <span className="text-lg">{m.flag}</span>
                         <span className="text-xs font-semibold text-slate-700 flex-1 truncate">{m.code}</span>
                         <span className="text-[10px] text-slate-500">{m.currency}</span>

@@ -19,13 +19,15 @@ export const MARKETPLACES = [
 
 export const MP_BY_CODE = MARKETPLACES.reduce((acc, m) => ({ ...acc, [m.code]: m }), {});
 
-export const INCOME_CATEGORIES = [
-  "Ürün Satışı", "FBA Satış", "FBM Satış", "İade Düzeltme", "Promosyon", "Diğer Gelir",
+export const TRANSACTION_CATEGORIES = ["Order payments", "Refunds", "Service Fees"];
+export const COST_FIELDS = [
+  { key: "product_cost", label: "Ürün Maliyeti" },
+  { key: "shipping_cost", label: "Kargo Maliyeti" },
+  { key: "extra_cost", label: "Ekstra Maliyet" },
 ];
-
-export const EXPENSE_CATEGORIES = [
-  "FBA Ücreti", "Reklam (PPC)", "Ürün Maliyeti (COGS)", "Kargo / Nakliye",
-  "İade / Refund", "Depolama Ücreti", "Abonelik", "Vergi", "Diğer Gider",
+export const RECOVERY_FIELDS = [
+  { key: "product_cost_recovery", label: "Geri Alınan Ürün Maliyeti" },
+  { key: "shipping_cost_recovery", label: "Kargo Ücreti İadesi (Claim)" },
 ];
 
 export const formatMoney = (amount, currency = "USD") => {
