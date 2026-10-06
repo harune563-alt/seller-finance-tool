@@ -41,14 +41,56 @@ async def settle_debt(db, user_id, debt_id, data):
         raise HTTPException(422, "Ödeme kalan borç/alacak tutarını aşamaz")
     return debt_output(updated, *(await names(db, user_id)))
 
+
+async def update_debt(db, user_id, debt_id, data):
+    doc = await owned(db, "company_debts", debt_id, user_id)
+    await owned(db, "company_people", data.person_id, user_id)
+    if data.store_id: await owned(db, "stores", data.store_id, user_id)
+    principal = cents(data.amount)
+    paid = sum(payment["amount_cents"] for payment in doc["payments"])
+    if principal < paid:
+        raise HTTPException(422, "Borç tutarı mevcut ödeme/tahsilat toplamından düşük olamaz")
+    if any(payment["date"] < data.date for payment in doc["payments"]):
+        raise HTTPException(422, "Borç tarihi mevcut ödeme/tahsilat tarihlerinden sonra olamaz")
+    changes = {**data.model_dump(mode="json", exclude={"amount"}), "principal_cents": principal, "remaining_cents": principal - paid}
+    updated = await db.company_debts.find_one_and_update({"id": debt_id, "user_id": user_id}, {"$set": changes}, return_document=True, projection={"_id": 0})
+    return debt_output(updated, *(await names(db, user_id)))
+
+
+async def update_debt_payment(db, user_id, debt_id, payment_id, data):
+    doc = await owned(db, "company_debts", debt_id, user_id)
+    payment = next((item for item in doc["payments"] if item["id"] == payment_id), None)
+    if not payment:
+        raise HTTPException(404, "Ödeme/tahsilat bulunamadı")
+    if data.date < doc["date"]:
+        raise HTTPException(422, "Ödeme tarihi borcun açılışından önce olamaz")
+    total_without = sum(item["amount_cents"] for item in doc["payments"] if item["id"] != payment_id)
+    amount = cents(data.amount)
+    if total_without + amount > doc["principal_cents"]:
+        raise HTTPException(422, "Ödeme kalan borç/alacak tutarını aşamaz")
+    payments = [{**item, **({"amount_cents": amount, "date": data.date, "note": data.note} if item["id"] == payment_id else {})} for item in doc["payments"]]
+    updated = await db.company_debts.find_one_and_update({"id": debt_id, "user_id": user_id}, {"$set": {"payments": payments, "remaining_cents": doc["principal_cents"] - total_without - amount}}, return_document=True, projection={"_id": 0})
+    return debt_output(updated, *(await names(db, user_id)))
+
+
+async def delete_debt_payment(db, user_id, debt_id, payment_id):
+    doc = await owned(db, "company_debts", debt_id, user_id)
+    payments = [item for item in doc["payments"] if item["id"] != payment_id]
+    if len(payments) == len(doc["payments"]):
+        raise HTTPException(404, "Ödeme/tahsilat bulunamadı")
+    remaining = doc["principal_cents"] - sum(item["amount_cents"] for item in payments)
+    updated = await db.company_debts.find_one_and_update({"id": debt_id, "user_id": user_id}, {"$set": {"payments": payments, "remaining_cents": remaining}}, return_document=True, projection={"_id": 0})
+    return debt_output(updated, *(await names(db, user_id)))
+
+
 async def company_overview(db, user_id):
     people, stores = await names(db, user_id)
     balances = {c: {"currency": c, "cash_balance": 0, "payables": 0, "receivables": 0, "capital": 0} for c in ("USD", "TRY")}
     ledger = []
-    def add(record_id, date, currency, amount, kind, note, created_at, person_id=None, store_id=None):
+    def add(record_id, date, currency, amount, kind, note, created_at, person_id=None, store_id=None, source=None):
         balances[currency]["cash_balance"] += amount
         ledger.append({"id": record_id, "date": date, "currency": currency, "amount": cash(amount), "kind": kind, "note": note,
-                       "person_name": people.get(person_id, {}).get("name", ""), "store_name": stores.get(store_id, {}).get("name", ""), "created_at": created_at})
+                       "person_name": people.get(person_id, {}).get("name", ""), "store_name": stores.get(store_id, {}).get("name", ""), "created_at": created_at, "source": source})
     accounts = await db.company_capital.find({"user_id": user_id}, {"_id": 0}).to_list(None)
     for a in accounts:
         balances[a["currency"]]["capital"] += a["native_cents"]
@@ -62,7 +104,7 @@ async def company_overview(db, user_id):
         for p in d["payments"]:
             add(p["id"], p["date"], d["currency"], -sign * p["amount_cents"], "repayment" if sign == 1 else "collection", p["note"], p["created_at"], d["person_id"], d.get("store_id"))
     for e in await db.company_cash.find({"user_id": user_id}, {"_id": 0}).to_list(None):
-        add(e["id"], e["date"], e["currency"], e["amount_cents"] * (1 if e["direction"] == "in" else -1), "cash_" + e["direction"], e["note"], e["created_at"])
+        add(e["id"], e["date"], e["currency"], e["amount_cents"] * (1 if e["direction"] == "in" else -1), "cash_" + e["direction"], e["note"], e["created_at"], source="cash")
     closings = await db.company_closings.find({"user_id": user_id}, {"_id": 0}).to_list(None)
     blocked = sum(c["status"] != "posted" for c in closings)
     profit_cents = sum(cents(c["net_profit"]) for c in closings if c["status"] == "posted")

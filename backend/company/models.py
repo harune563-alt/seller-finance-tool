@@ -59,6 +59,87 @@ class CashIn(AmountIn):
     currency: Currency
     direction: Literal["in", "out"]
 
+class CapitalUpdateIn(BaseModel):
+    amount: Decimal = Field(gt=0, le=10000000000, max_digits=14, decimal_places=2)
+    date: str
+    note: str = Field(default="", max_length=500)
+    person_id: str
+    store_id: str
+    currency: Currency
+    direction: Literal["contribution", "withdrawal"] = "contribution"
+
+    @field_validator("date")
+    @classmethod
+    def valid_date(cls, value):
+        result = calendar_date.fromisoformat(value)
+        if result > datetime.now(timezone.utc).date(): raise ValueError("İşlem tarihi gelecekte olamaz")
+        return result.isoformat()
+
+
+class CashUpdateIn(BaseModel):
+    amount: Decimal = Field(gt=0, le=10000000000, max_digits=14, decimal_places=2)
+    date: str
+    note: str = Field(default="", max_length=500)
+    currency: Currency
+    direction: Literal["in", "out"]
+
+    @field_validator("date")
+    @classmethod
+    def valid_date(cls, value):
+        result = calendar_date.fromisoformat(value)
+        if result > datetime.now(timezone.utc).date(): raise ValueError("İşlem tarihi gelecekte olamaz")
+        return result.isoformat()
+
+
+class DebtUpdateIn(BaseModel):
+    amount: Decimal = Field(gt=0, le=10000000000, max_digits=14, decimal_places=2)
+    date: str
+    note: str = Field(default="", max_length=500)
+    person_id: str
+    store_id: Optional[str] = None
+    direction: Literal["payable", "receivable"]
+    currency: Currency
+    due_date: Optional[str] = None
+    cash_effect: bool = False
+
+    @field_validator("date")
+    @classmethod
+    def valid_date(cls, value):
+        result = calendar_date.fromisoformat(value)
+        if result > datetime.now(timezone.utc).date(): raise ValueError("İşlem tarihi gelecekte olamaz")
+        return result.isoformat()
+
+    @model_validator(mode="after")
+    def valid_due_date(self):
+        if self.due_date:
+            self.due_date = calendar_date.fromisoformat(self.due_date).isoformat()
+            if self.due_date < self.date: raise ValueError("Vade işlem tarihinden önce olamaz")
+        return self
+
+
+class PaymentUpdateIn(BaseModel):
+    amount: Decimal = Field(gt=0, le=10000000000, max_digits=14, decimal_places=2)
+    date: str
+    note: str = Field(default="", max_length=500)
+
+    @field_validator("date")
+    @classmethod
+    def valid_date(cls, value):
+        result = calendar_date.fromisoformat(value)
+        if result > datetime.now(timezone.utc).date(): raise ValueError("İşlem tarihi gelecekte olamaz")
+        return result.isoformat()
+
+
+class ClosingUpdateIn(BaseModel):
+    revenue: Optional[float] = Field(default=None, allow_inf_nan=False)
+    expenses: Optional[float] = Field(default=None, allow_inf_nan=False)
+    net_profit: Optional[float] = Field(default=None, allow_inf_nan=False)
+
+
+class BulkIdsIn(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=100)
+
+
 class PaymentOut(BaseModel):
     id: str
     amount: float
@@ -121,6 +202,7 @@ class LedgerEntry(BaseModel):
     person_name: str = ""
     store_name: str = ""
     created_at: str
+    source: Optional[str] = None
 
 class CashBalance(BaseModel):
     currency: str

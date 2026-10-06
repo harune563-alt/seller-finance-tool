@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus, Pencil, ArrowDownToLine } from "lucide-react";
+import { Plus, Pencil, Trash2, ArrowDownToLine } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useStore } from "@/contexts/StoreContext";
 import { useCompanyResource } from "@/hooks/useCompanyResource";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { CapitalEditDialog } from "@/components/company/CapitalEditDialog";
 import { PersonDialog } from "@/components/company/PersonDialog";
 import { CurrencyField, TextField, SelectField, FormError, today, companyMoney, currencyName, apiError } from "@/components/company/Fields";
 
@@ -15,6 +17,8 @@ export default function Capital() {
   const people = useCompanyResource("/company/people");
   const capital = useCompanyResource(storeId ? `/company/capital?store_id=${storeId}` : null);
   const [personModal, setPersonModal] = useState(null);
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [form, setForm] = useState({ person_id: "", direction: "contribution", currency: "USD", amount: "", date: today(), note: "" });
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const requestId = useRef(crypto.randomUUID());
@@ -25,6 +29,8 @@ export default function Capital() {
     try { await api.post("/company/capital", { ...form, amount: Number(form.amount), store_id: storeId, request_id: requestId.current }); toast.success("Sermaye kaydedildi"); capital.refresh(); change("amount", ""); }
     catch (e) { setError(apiError(e)); } finally { setBusy(false); }
   };
+  const toggleSelected = id => setSelectedIds(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const removeEntries = async ids => { if (!window.confirm(`${ids.length} sermaye kaydı kalıcı olarak silinsin mi?`)) return; try { if (ids.length === 1) await api.delete(`/company/capital/${ids[0]}`); else await api.post("/company/capital/bulk-delete", { ids }); setSelectedIds(new Set()); toast.success(`${ids.length} sermaye kaydı silindi`); capital.refresh(); } catch (e) { toast.error(apiError(e)); } };
   return <div className="space-y-7" data-testid="capital-page">
     <div className="flex flex-wrap justify-between items-end gap-4"><div className="w-full sm:w-72"><SelectField label="Mağaza" id="capital-store" value={storeId} onChange={setStoreId} options={stores.map(s => ({ value: s.id, label: s.name }))} /></div><Button onClick={() => setPersonModal({})} data-testid="add-company-person"><Plus className="w-4 h-4 mr-2" />Kişi Ekle</Button></div>
     <FormError error={people.error || capital.error} id="capital-load-error" />
@@ -43,8 +49,9 @@ export default function Capital() {
       <TextField label="Tarih" id="capital-date" value={form.date} onChange={v => change("date", v)} type="date" required />
       <TextField label="Not" id="capital-note" value={form.note} onChange={v => change("note", v)} maxLength={500} />
     </div><FormError error={error} id="capital-form-error" /><div className="flex justify-end"><Button disabled={busy || !storeId} type="submit" data-testid="capital-submit"><ArrowDownToLine className="w-4 h-4 mr-2" />{busy ? "Kaydediliyor…" : "Hareketi Kaydet"}</Button></div></form>
-    <section className="space-y-3"><h2 className="text-lg font-display font-bold">Sermaye Geçmişi</h2>{capital.data?.entries.map(e => <div key={e.id} className="border-b border-slate-200 py-3 flex flex-wrap justify-between gap-3" data-testid={`capital-entry-${e.id}`}><div><strong className="text-sm">{e.person_name}</strong><p className="text-xs text-slate-500 mt-1">{e.date} · {e.direction === "contribution" ? "Sermaye girişi" : "Sermaye iadesi"} · {e.note}</p></div><div className="text-right"><strong className={e.direction === "contribution" ? "text-emerald-700" : "text-rose-600"}>{e.direction === "withdrawal" ? "−" : "+"}{companyMoney(e.amount, e.currency)}</strong><p className="text-xs text-slate-500 mt-1">Sermaye karşılığı: {companyMoney(e.usd_basis)}</p></div></div>)}</section>
+    <section className="space-y-3"><div className="flex flex-wrap justify-between items-center gap-3"><h2 className="text-lg font-display font-bold">Sermaye Geçmişi</h2>{selectedIds.size > 0 && <Button variant="destructive" size="sm" onClick={() => removeEntries([...selectedIds])}>Seçilenleri Sil ({selectedIds.size})</Button>}</div>{capital.data?.entries.map(e => <div key={e.id} className="border-b border-slate-200 py-3 flex flex-wrap justify-between gap-3" data-testid={`capital-entry-${e.id}`}><div className="flex items-start gap-3"><Checkbox checked={selectedIds.has(e.id)} onCheckedChange={() => toggleSelected(e.id)} aria-label="Sermaye kaydını seç" /><div><strong className="text-sm">{e.person_name}</strong><p className="text-xs text-slate-500 mt-1">{e.date} · {e.direction === "contribution" ? "Sermaye girişi" : "Sermaye iadesi"} · {e.note}</p></div></div><div className="text-right"><strong className={e.direction === "contribution" ? "text-emerald-700" : "text-rose-600"}>{e.direction === "withdrawal" ? "−" : "+"}{companyMoney(e.amount, e.currency)}</strong><p className="text-xs text-slate-500 mt-1">Sermaye karşılığı: {companyMoney(e.usd_basis)}</p><div className="flex justify-end gap-1 mt-2"><Button variant="ghost" size="icon" onClick={() => setEditingEntry(e)} aria-label="Sermaye kaydını düzenle" data-testid={`edit-capital-${e.id}`}><Pencil className="w-4 h-4" /></Button><Button variant="ghost" size="icon" onClick={() => removeEntries([e.id])} aria-label="Sermaye kaydını sil" data-testid={`delete-capital-${e.id}`} className="text-slate-400 hover:text-rose-600"><Trash2 className="w-4 h-4" /></Button></div></div></div>)}</section>
     <section><h2 className="text-lg font-display font-bold mb-3">Kişiler</h2><div className="flex flex-wrap gap-3">{people.data?.map(p => <Button key={p.id} variant="outline" onClick={() => setPersonModal(p)} data-testid={`edit-person-${p.id}`}><Pencil className="w-3 h-3 mr-2" />{p.name}</Button>)}</div></section>
+    {editingEntry && <CapitalEditDialog entry={editingEntry} people={people.data || []} storeId={storeId} onClose={() => setEditingEntry(null)} onSaved={capital.refresh} />}
     {personModal && <PersonDialog person={personModal.id ? personModal : null} onClose={() => setPersonModal(null)} onSaved={p => { people.refresh(); capital.refresh(); change("person_id", p.id); }} />}
   </div>;
 }

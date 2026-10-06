@@ -260,6 +260,11 @@ class PaymentReferenceIn(BaseModel):
     def trim_reference(cls, value):
         return value.strip()
 
+
+class BulkDeleteIn(BaseModel):
+    ids: List[str] = Field(min_length=1, max_length=100)
+
+
 # ---------------------------------------------------------------------------
 # App & Router
 # ---------------------------------------------------------------------------
@@ -361,9 +366,19 @@ async def delete_store(store_id: str, user=Depends(get_current_user)):
     await db.transactions.delete_many({"store_id": store_id, "user_id": user["id"]})
     return {"ok": True}
 
+@api.post("/stores/bulk-delete")
+async def bulk_delete_stores(data: BulkDeleteIn, user=Depends(get_current_user)):
+    ids = list(dict.fromkeys(data.ids))
+    blocked = await db.company_capital.find_one({"user_id": user["id"], "store_id": {"$in": ids}, "entries.0": {"$exists": True}}) or await db.company_debts.find_one({"user_id": user["id"], "store_id": {"$in": ids}}) or await db.company_closings.find_one({"user_id": user["id"], "store_id": {"$in": ids}})
+    if blocked:
+        raise HTTPException(409, "Sermaye, borç veya kapanış geçmişi olan seçili mağazalar silinemez")
+    result = await db.stores.delete_many({"id": {"$in": ids}, "user_id": user["id"]})
+    if result.deleted_count == 0: raise HTTPException(404, "Silinecek mağaza bulunamadı")
+    await db.transactions.delete_many({"store_id": {"$in": ids}, "user_id": user["id"]})
+    return {"ok": True, "deleted": result.deleted_count}
+
 # ------------------ Transactions ------------------
-@api.post("/transactions", response_model=TransactionOut)
-async def create_transaction(data: TransactionIn, user=Depends(get_current_user)):
+async def validate_transaction(data: TransactionIn, user):
     store = await db.stores.find_one({"id": data.store_id, "user_id": user["id"]}, {"_id": 0})
     if not store:
         raise HTTPException(400, "Geçersiz mağaza")
@@ -384,6 +399,11 @@ async def create_transaction(data: TransactionIn, user=Depends(get_current_user)
         raise HTTPException(400, "Ödeme referansı yalnızca Amazon ödemelerine eklenebilir")
     if data.category != "Refunds" and any(getattr(data, key) for key in RECOVERY_FIELDS):
         raise HTTPException(400, "Geri kazanımlar yalnızca Refunds kaydına eklenebilir")
+
+
+@api.post("/transactions", response_model=TransactionOut)
+async def create_transaction(data: TransactionIn, user=Depends(get_current_user)):
+    await validate_transaction(data, user)
     tid = str(uuid.uuid4())
     doc = {
         "id": tid, "user_id": user["id"], **data.model_dump(),
@@ -442,6 +462,38 @@ async def search_transactions(
     result = await search_history(db, scope, view, search, category, start_date.isoformat() if start_date else None,
                                   end_date.isoformat() if end_date else None, outcome, page, page_size)
     return HistoryOut(**{**result, "items": [TransactionOut(**row) for row in result["items"]]})
+
+
+@api.put("/transactions/{tx_id}", response_model=TransactionOut)
+async def update_transaction(tx_id: str, data: TransactionIn, user=Depends(get_current_user)):
+    existing = await db.transactions.find_one({"id": tx_id, "user_id": user["id"]}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "İşlem bulunamadı")
+    await validate_transaction(data, user)
+    candidate = {
+        "id": tx_id, "user_id": user["id"], **data.model_dump(),
+        "cost_currency": "USD", "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
+    }
+    try:
+        enriched = await attach_usd(db, candidate)
+    except FxError as exc:
+        raise HTTPException(422, str(exc))
+    changes = {key: value for key, value in enriched.items() if key not in ("id", "user_id", "created_at", "_id")}
+    doc = await db.transactions.find_one_and_update(
+        {"id": tx_id, "user_id": user["id"]}, {"$set": changes}, return_document=True, projection={"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "İşlem bulunamadı")
+    return TransactionOut(**doc)
+
+
+@api.post("/transactions/bulk-delete")
+async def bulk_delete_transactions(data: BulkDeleteIn, user=Depends(get_current_user)):
+    ids = list(dict.fromkeys(data.ids))
+    result = await db.transactions.delete_many({"id": {"$in": ids}, "user_id": user["id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Silinecek işlem bulunamadı")
+    return {"ok": True, "deleted": result.deleted_count}
 
 
 @api.patch("/payouts/{tx_id}/reference", response_model=TransactionOut)

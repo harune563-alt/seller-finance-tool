@@ -21,6 +21,7 @@ export default function Stores() {
   const { stores, refresh, setActiveStoreId } = useStore();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [form, setForm] = useState({ name: "", marketplaces: ["US"], default_currency: "USD" });
 
   useEffect(() => { refresh(); }, [refresh]);
@@ -71,6 +72,13 @@ export default function Stores() {
     await api.delete(`/stores/${s.id}`);
     toast.success("Mağaza silindi");
     refresh();
+  };
+
+  const toggleSelected = id => setSelectedIds(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const removeSelected = async () => {
+    if (!selectedIds.size || !window.confirm(`${selectedIds.size} mağaza ve bağlı işlemler kalıcı olarak silinecek. Emin misin?`)) return;
+    try { await api.post("/stores/bulk-delete", { ids: [...selectedIds] }); toast.success(`${selectedIds.size} mağaza silindi`); setSelectedIds(new Set()); refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Mağazalar silinemedi"); }
   };
 
   return (
@@ -139,6 +147,7 @@ export default function Stores() {
         </Dialog>
       </div>
 
+      {selectedIds.size > 0 && <div className="flex justify-end"><Button variant="destructive" onClick={removeSelected} data-testid="bulk-delete-stores">Seçilen mağazaları sil ({selectedIds.size})</Button></div>}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {stores.length === 0 && (
           <div className="col-span-full bg-white border border-dashed border-slate-300 rounded-2xl p-10 text-center">
@@ -149,25 +158,15 @@ export default function Stores() {
         {stores.map((s) => (
           <div key={s.id} className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col"
                data-testid={`store-card-${s.id}`}>
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center">
-                  <StoreIcon className="w-5 h-5 text-amber-400" />
-                </div>
-                <div>
-                  <div className="font-display font-bold text-slate-900">{s.name}</div>
-                  <div className="text-xs text-slate-500">Varsayılan: {s.default_currency}</div>
-                </div>
+            <div className="flex items-start justify-between gap-2">
+              <Checkbox checked={selectedIds.has(s.id)} onCheckedChange={() => toggleSelected(s.id)} aria-label={`${s.name} mağazasını seç`} data-testid={`select-store-${s.id}`} />
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center"><StoreIcon className="w-5 h-5 text-amber-400" /></div>
+                <div className="min-w-0"><div className="font-display font-bold text-slate-900 truncate">{s.name}</div><div className="text-xs text-slate-500">Varsayılan: {s.default_currency}</div></div>
               </div>
               <div className="flex gap-1">
-                <Button variant="ghost" size="icon" onClick={() => openEdit(s)}
-                        data-testid={`edit-store-${s.id}`} className="text-slate-500 hover:text-slate-900">
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={() => remove(s)}
-                        data-testid={`delete-store-${s.id}`} className="text-slate-400 hover:text-rose-600 hover:bg-rose-50">
-                  <Trash2 className="w-4 h-4" />
-                </Button>
+                <Button variant="ghost" size="icon" onClick={() => openEdit(s)} data-testid={`edit-store-${s.id}`} className="text-slate-500 hover:text-slate-900"><Pencil className="w-4 h-4" /></Button>
+                <Button variant="ghost" size="icon" onClick={() => remove(s)} data-testid={`delete-store-${s.id}`} className="text-slate-400 hover:text-rose-600 hover:bg-rose-50"><Trash2 className="w-4 h-4" /></Button>
               </div>
             </div>
             <div className="mt-4 flex flex-wrap gap-1.5">

@@ -61,7 +61,7 @@
     "zod": "3.24.4"
   },
   "scripts": {
-    "start": "craco start",
+    "start": "./node_modules/.bin/craco start",
     "build": "craco build",
     "test": "craco test"
   },

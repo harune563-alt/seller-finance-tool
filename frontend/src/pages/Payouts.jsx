@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useStore } from "@/contexts/StoreContext";
 import { MP_BY_CODE } from "@/constants/marketplaces";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +19,7 @@ import { MissingFxAlert, NativeBalances, formatUsd } from "@/components/FxStatus
 import { useRecordSearch } from "@/hooks/useRecordSearch";
 import { RecordFilters, RecordPagination } from "@/components/RecordFilters";
 import { PayoutHistory } from "@/components/payouts/PayoutHistory";
-import { PaymentReferenceDialog } from "@/components/payouts/PaymentReferenceDialog";
+import { TransactionEditDialog } from "@/components/transactions/TransactionEditDialog";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -33,6 +34,9 @@ export default function Payouts() {
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const [editingReference, setEditingReference] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [deleting, setDeleting] = useState([]);
+  const [deletingBusy, setDeletingBusy] = useState(false);
   const history = useRecordSearch({ storeId: activeStoreId, marketplace: activeMarketplace, currency: selectedCurrency, view: "payouts", revision });
   const [form, setForm] = useState({
     amount: "",
@@ -40,7 +44,19 @@ export default function Payouts() {
   });
 
   const fetchData = () => setRevision(v => v + 1);
-  useEffect(() => { setSelectedCurrency(""); setEditingReference(null); }, [activeStoreId, activeMarketplace]);
+  const toggleSelected = id => setSelectedIds(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const toggleAll = () => setSelectedIds(current => { const ids = history.items.map(row => row.id); const allSelected = ids.length > 0 && ids.every(id => current.has(id)); return allSelected ? new Set([...current].filter(id => !ids.includes(id))) : new Set([...current, ...ids]); });
+  const remove = async ids => {
+    setDeletingBusy(true);
+    try {
+      if (ids.length === 1) await api.delete(`/transactions/${ids[0]}`);
+      else await api.post("/transactions/bulk-delete", { ids });
+      setDeleting([]); setSelectedIds(current => new Set([...current].filter(id => !ids.includes(id))));
+      toast.success(`${ids.length} ödeme silindi`); fetchData();
+    } catch { toast.error("Ödeme(ler) silinemedi"); }
+    finally { setDeletingBusy(false); }
+  };
+  useEffect(() => { setSelectedCurrency(""); setEditingReference(null); setSelectedIds(new Set()); setDeleting([]); }, [activeStoreId, activeMarketplace]);
   useEffect(() => {
     let current = true;
     setSummary(null); setError("");
@@ -69,16 +85,11 @@ export default function Payouts() {
     finally { setSaving(false); }
   };
 
-  const remove = async (id) => {
-    try { await api.delete(`/transactions/${id}`); toast.success("Ödeme silindi"); fetchData(); }
-    catch { toast.error("Ödeme silinemedi"); }
-  };
-
   return (
     <div className="space-y-6" data-testid="payouts-page">
       <div>
         <h1 className="font-display text-3xl font-extrabold text-slate-900">Amazon Ödemeleri & Bakiye</h1>
-        <p className="text-sm text-slate-500 mt-1">Amazon'dan hesabına gelen disbursement (ödeme) tutarlarını kaydet, bekleyen bakiyeni takip et.</p>
+        <p className="text-sm text-slate-500 mt-1">Amazon hesabına gelen disbursement (ödeme) tutarlarını kaydet, bekleyen bakiyeni takip et.</p>
       </div>
 
       <FinanceCurrency summary={summary} value={selectedCurrency} onChange={setSelectedCurrency} prefix="payout" />
@@ -147,9 +158,11 @@ export default function Payouts() {
       </form>
 
       <RecordFilters history={history} prefix="payout" searchLabel="Ödeme referansı veya not" categoryLabel="Ödeme Durumu" options={STATUSES} unit="ödeme" />
-      <PayoutHistory history={history} onEditReference={setEditingReference} onDelete={remove} />
+      {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3" data-testid="payout-selection-toolbar"><span className="text-sm font-medium text-rose-800">{selectedIds.size} ödeme seçildi</span><Button variant="destructive" onClick={() => setDeleting([...selectedIds])} data-testid="bulk-delete-payouts">Seçilenleri Sil</Button></div>}
+      <PayoutHistory history={history} onEdit={setEditingReference} onDelete={id => setDeleting([id])} selectedIds={selectedIds} onToggle={toggleSelected} onToggleAll={toggleAll} />
       <RecordPagination history={history} prefix="payout" />
-      {editingReference && <PaymentReferenceDialog key={editingReference.id} row={editingReference} onClose={() => setEditingReference(null)} onSaved={fetchData} />}
+      {editingReference && <TransactionEditDialog key={editingReference.id} row={editingReference} onClose={() => setEditingReference(null)} onSaved={fetchData} />}
+      <Dialog open={deleting.length > 0} onOpenChange={open => { if (!open && !deletingBusy) setDeleting([]); }}><DialogContent className="bg-white" data-testid="delete-payout-dialog"><DialogHeader><DialogTitle>{deleting.length} ödeme silinsin mi?</DialogTitle><DialogDescription>Seçilen Amazon ödeme kayıtları kalıcı olarak silinecek.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" disabled={deletingBusy} onClick={() => setDeleting([])}>Vazgeç</Button><Button variant="destructive" disabled={deletingBusy} onClick={() => remove(deleting)} data-testid="confirm-delete-payout">{deletingBusy ? "Siliniyor…" : "Sil"}</Button></DialogFooter></DialogContent></Dialog>
     </div>
   );
 }
