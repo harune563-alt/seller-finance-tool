@@ -1,0 +1,8 @@
+crons:
+  - name: monthly-profit-close
+    description: "Kapalı ayların mağaza kâr/zararını mükerrer kayıt oluşturmadan şirket defterine işler"
+    cron: "0 3 * * *"
+    endpoint: "{{BASE_URL}}/api/company/cron/monthly-close"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

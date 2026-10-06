@@ -6,6 +6,33 @@ JWT e-posta/şifre, tek mağazada çoklu pazar (US, CA, MX, UK, DE, AU vb.),
 çoklu para birimi, manuel giriş ve CSV aktarımı; Türkçe açık temalı finans paneli.
 
 ## Son kullanıcı talebi
+### Yeni kapsam: Sermaye & Kasa, mağaza portföyü ve ayrıntılı Excel (2026-10-06, geliştirme/test aşaması)
+- Kullanıcı: her mağazaya yatırılan **net sermayeye göre ayrı hisse**; dış yatırımcı sermayesi hisseye dahil,
+  borç geri ödenebilir yükümlülük olup hisse oluşturmaz. Kişisel hesap değil **şirketin kişilerle borç/alacağı**.
+- Kasa/sermaye/borç seçenekleri USD ve TL (API ISO TRY). Nakit dövizleri ayrı tutulur.
+- Sermaye USD karşılaştırma temeliyle paylaştırılır; TL girişte eski FX servisi işlem tarihi kuru sabitler.
+  İade tarihsel ortalama sermaye maliyetini azaltır, yeni kura göre yanlış pay değişimi olmaz.
+- Önceki kapanmış aylar mağaza/ay başına tek USD **nakit dışı muhasebe kaydı**; zarar negatif.
+  Sonraki tarihsel değişiklikler aynı kaydı revision history ile günceller. İçinde bulunulan ay kapanmaz.
+- Gerçek nakit kasası, borç/tahsilatlar ve aylık kâr kapanışları ayrıdır. Aylık kapanış banka/Amazon transferi değildir.
+- Dashboard'a global mağaza/tarih filtreli USD net kâr karşılaştırma paneli.
+- Rapor'a tüm mağazalar/pazarlar/kaynak döviz seçimi, sipariş detayları ve XLSX indirme.
+- Yeni routes: /company (Kasa), /company/capital, /company/debts, /company/closings.
+- Backend: company/{models,common,capital,treasury,closings,routes}.py, reporting.py, report_workbook.py.
+- API: /api/company/people, /capital, /debts, /debts/{id}/payments, /cash, /overview,
+  /closings, /closings/run, /jobs; /api/portfolio/summary, /api/reports/orders, /api/reports/excel.
+- Mongo: company_people, company_capital (atomik account + entries), company_debts (atomik kalan + payments),
+  company_cash, company_closings (unique user/store/period), company_jobs (unique run_id).
+- İdempotent finansal yazımlar UUID request_id alır; sermaye iadesi/borç ödemesi kalan tutarı aşamaz.
+  Finansal şirket geçmişi olan mağaza silinemez (409) — geçmiş kayıtlar korunur.
+- Planlı iş: .emergent/crons.yml monthly-profit-close, cron `0 3 * * *` UTC;
+  POST /api/company/cron/monthly-close, backend/.env WEBHOOK_CRON_SECRET. Hızlı202 + durable job + BackgroundTasks.
+  Günlük tekrar tüm kapalı ayları uzlaştırır (scheduler/background loop kurulmadı).
+- Cron sözleşmesi doğrulandı: yetkisiz401, valid2020.12sn, duplicate202 duplicate=true, iş completed API'den doğrulandı.
+- Excel: Özet, Pazar Yerleri, Siparişler, İşlem Detayları, Amazon Ödemeleri, Rapor Bilgisi;
+  gerçek .xlsx, tarih aralığı dahil tüm hareketler; 50.000 üstünde açık413, sessiz kırpma yok; formül enjeksiyonu koruması.
+- Python derleme/yarn build başarılı; ana ajan Excel dosyasını openpyxl ile açtı. Tam testing agent doğrulaması bekleniyor.
+
 ### Son güncelleme: işlem arama ve ödeme referansı (2026-10-05)
 Gelir/Gider işlem kayıtlarında Order ID sorgusu; Amazon ödeme hareketlerinde filtreleme istendi.
 Kullanıcı tarih aralığı, işlem türü/durum ve kısmi aramayı onayladı; ödeme tarafında

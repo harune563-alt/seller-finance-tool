@@ -1,0 +1,48 @@
+import { useRef, useState } from "react";
+import { Plus, ArrowRightLeft } from "lucide-react";
+import { toast } from "sonner";
+import api from "@/lib/api";
+import { useStore } from "@/contexts/StoreContext";
+import { useCompanyResource } from "@/hooks/useCompanyResource";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { PersonDialog } from "@/components/company/PersonDialog";
+import { DebtPaymentDialog } from "@/components/company/DebtPaymentDialog";
+import { TextField, SelectField, CurrencyField, FormError, today, companyMoney, apiError } from "@/components/company/Fields";
+
+export default function Debts() {
+  const { stores } = useStore();
+  const people = useCompanyResource("/company/people");
+  const debts = useCompanyResource("/company/debts");
+  const [form, setForm] = useState({ person_id: "", store_id: "ALL", direction: "payable", currency: "USD", amount: "", date: today(), due_date: "", cash_effect: false, note: "" });
+  const [currencyFilter, setCurrencyFilter] = useState("ALL"), [statusFilter, setStatusFilter] = useState("open");
+  const [search, setSearch] = useState("");
+  const [personOpen, setPersonOpen] = useState(false), [payment, setPayment] = useState(null);
+  const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const requestId = useRef(crypto.randomUUID());
+  const change = (key, value) => { setForm(f => ({ ...f, [key]: value })); requestId.current = crypto.randomUUID(); };
+  const submit = async e => { e.preventDefault(); setBusy(true); setError(""); try { await api.post("/company/debts", { ...form, store_id: form.store_id === "ALL" ? null : form.store_id, due_date: form.due_date || null, amount: Number(form.amount), request_id: requestId.current }); toast.success("Borç/alacak kaydedildi"); debts.refresh(); change("amount", ""); } catch (e) { setError(apiError(e)); } finally { setBusy(false); } };
+  const rows = (debts.data || []).filter(d => (currencyFilter === "ALL" || d.currency === currencyFilter) && (statusFilter === "ALL" || (statusFilter === "open" ? d.status !== "closed" : d.status === statusFilter)) && `${d.person_name} ${d.note}`.toLocaleLowerCase("tr").includes(search.toLocaleLowerCase("tr")));
+  return <div className="space-y-7" data-testid="debts-page">
+    <div className="flex justify-between items-center gap-3"><h2 className="text-lg font-display font-bold">Şirketin Borç & Alacakları</h2><Button onClick={() => setPersonOpen(true)} data-testid="debt-add-person"><Plus className="w-4 h-4 mr-2" />Kişi Ekle</Button></div>
+    <FormError error={debts.error || people.error} id="debt-load-error" />
+    <form onSubmit={submit} className="border-y border-slate-200 bg-white p-4 sm:p-6 space-y-5" data-testid="debt-form"><div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <SelectField label="Kişi" id="debt-person" value={form.person_id} onChange={v => change("person_id", v)} options={(people.data || []).map(p => ({ value: p.id, label: p.name }))} />
+      <SelectField label="Kayıt Türü" id="debt-direction" value={form.direction} onChange={v => change("direction", v)} options={[{ value: "payable", label: "Şirketin Borcu" }, { value: "receivable", label: "Şirketin Alacağı" }]} />
+      <CurrencyField id="debt-currency" value={form.currency} onChange={v => change("currency", v)} />
+      <TextField label="Tutar" id="debt-amount" value={form.amount} onChange={v => change("amount", v)} type="number" min="0.01" step="0.01" required />
+      <TextField label="İşlem Tarihi" id="debt-date" value={form.date} onChange={v => change("date", v)} type="date" required />
+      <TextField label="Vade (isteğe bağlı)" id="debt-due-date" value={form.due_date} onChange={v => change("due_date", v)} type="date" />
+      <SelectField label="İlgili Mağaza" id="debt-store" value={form.store_id} onChange={v => change("store_id", v)} options={[{ value: "ALL", label: "Şirket Geneli" }, ...stores.map(s => ({ value: s.id, label: s.name }))]} />
+      <div className="sm:col-span-2"><TextField label="Not" id="debt-note" value={form.note} onChange={v => change("note", v)} maxLength={500} /></div>
+    </div><label className="flex items-start gap-3 text-sm" htmlFor="debt-cash-effect"><Checkbox id="debt-cash-effect" data-testid="debt-cash-effect" checked={form.cash_effect} onCheckedChange={v => change("cash_effect", v === true)} /><span>{form.direction === "payable" ? "Bu tutar fiilen şirket kasasına alındı" : "Bu tutar fiilen şirket kasasından ödendi"}</span></label><FormError error={error} id="debt-form-error" /><div className="flex justify-end"><Button type="submit" disabled={busy || !form.person_id} data-testid="debt-submit">{busy ? "Kaydediliyor…" : "Kaydı Ekle"}</Button></div></form>
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4"><TextField label="Kişi / Not Ara" id="debt-search" value={search} onChange={setSearch} /><SelectField label="Para Birimi" id="debt-currency-filter" value={currencyFilter} onChange={setCurrencyFilter} options={[{ value: "ALL", label: "TL ve USD" }, { value: "USD", label: "USD" }, { value: "TRY", label: "TL" }]} /><SelectField label="Durum" id="debt-status-filter" value={statusFilter} onChange={setStatusFilter} options={[{ value: "ALL", label: "Tümü" }, { value: "open", label: "Açık Kayıtlar" }, { value: "overdue", label: "Vadesi Geçen" }, { value: "closed", label: "Kapanan" }]} /></div>
+    <div className="space-y-4">{debts.loading ? <p data-testid="debt-loading">Yükleniyor…</p> : !rows.length ? <p data-testid="debts-empty" className="text-sm text-slate-500">Bu görünümde kayıt yok.</p> : rows.map(d => <article key={d.id} className="bg-white border border-slate-200 rounded-lg p-5 space-y-4" data-testid={`debt-row-${d.id}`}>
+      <div className="flex flex-wrap justify-between gap-4"><div><strong>{d.person_name}</strong><p className="text-xs text-slate-500 mt-1">{d.direction === "payable" ? "Şirketin borcu" : "Şirketin alacağı"} · {d.store_name || "Şirket geneli"} · {d.date}</p><p className="text-xs text-slate-500 mt-1 break-words">{d.note}</p></div><div className="text-right"><p className="text-xs text-slate-500">Kalan</p><strong className={`text-xl font-mono-num ${d.direction === "payable" ? "text-rose-600" : "text-emerald-700"}`} data-testid={`debt-remaining-${d.id}`}>{companyMoney(d.remaining, d.currency)}</strong><p className="text-xs text-slate-500 mt-1">İlk tutar: {companyMoney(d.principal, d.currency)}</p></div></div>
+      <div className="flex flex-wrap justify-between items-center gap-3"><span className={`text-xs ${d.status === "overdue" ? "text-rose-700" : "text-slate-500"}`} data-testid={`debt-status-${d.id}`}>{d.status === "closed" ? "Kapandı" : d.status === "overdue" ? "Vadesi geçti" : "Açık"}{d.due_date && ` · Vade: ${d.due_date}`}</span>{d.remaining > 0 && <Button variant="outline" onClick={() => setPayment(d)} data-testid={`pay-debt-${d.id}`}><ArrowRightLeft className="w-4 h-4 mr-2" />{d.direction === "payable" ? "Ödeme Kaydet" : "Tahsilat Kaydet"}</Button>}</div>
+      {d.payments.length > 0 && <div className="border-t border-slate-100 pt-3 space-y-2">{d.payments.map(p => <div key={p.id} className="text-xs flex flex-wrap justify-between gap-2 text-slate-500" data-testid={`debt-payment-${p.id}`}><span>{p.date} · {p.note || "Ödeme / tahsilat"}</span><strong>{companyMoney(p.amount, d.currency)}</strong></div>)}</div>}
+    </article>)}</div>
+    {personOpen && <PersonDialog onClose={() => setPersonOpen(false)} onSaved={p => { people.refresh(); change("person_id", p.id); }} />}
+    {payment && <DebtPaymentDialog debt={payment} onClose={() => setPayment(null)} onSaved={debts.refresh} />}
+  </div>;
+}

@@ -1,9 +1,10 @@
 {
-  "project_title": "Amazon Multi-Marketplace Seller Finance & P&L Dashboard",
+  "project_title": "Amazon Multi-Marketplace Seller & Company Capital/Debt Finance Dashboard",
   "app_type": "dashboard",
   "theme": "light",
-  "design_archetype": "Swiss & Precision Finance (Archetype 4 with Vibrant Emerald & Slate Accents)",
-  "language": "Turkish (UI Labels and Messages) with Multi-Currency Financials ($ USD, CAD$, MXN$, £ GBP, € EUR, A$ AUD)",
+  "design_archetype": "Swiss & Precision Finance (Archetype 4 with Vibrant Emerald, Indigo & Slate Accents)",
+  "language": "Turkish (UI Labels and Messages) with Multi-Currency Support (TL, USD, CAD, MXN, GBP, EUR, AUD)",
+  "file_extensions": ".js / .jsx (React JS)",
   "typography": {
     "font_family_headings": "Outfit, Cabinet Grotesk, sans-serif",
     "font_family_body": "Inter, IBM Plex Sans, sans-serif",
@@ -13,7 +14,7 @@
       "h2_section": "text-xl sm:text-2xl font-bold tracking-tight text-slate-800",
       "h3_card": "text-base sm:text-lg font-semibold text-slate-800",
       "kpi_value": "text-2xl sm:text-3xl font-extrabold tracking-tight font-mono text-slate-900",
-      "body": "text-sm text-slate-6 shadow-none font-normal leading-relaxed text-slate-600",
+      "body": "text-sm text-slate-600 font-normal leading-relaxed",
       "table_data": "text-sm font-medium text-slate-700 font-mono",
       "label": "text-xs font-semibold uppercase tracking-wider text-slate-500"
     }
@@ -60,116 +61,102 @@
       "net_profit": "#6366F1",
       "amazon_payouts": "#F59E0B",
       "fba_fees": "#8B5CF6",
-      "ad_spend": "#06B6D4"
+      "ad_spend": "#06B6D4",
+      "store_a": "#3B82F6",
+      "store_b": "#10B981",
+      "store_c": "#F59E0B",
+      "store_d": "#8B5CF6",
+      "total_aggregate": "#0F172A"
     }
   },
-  "marketplaces": [
-    {"code": "ALL", "name": "Tüm Pazarlar (All Marketplaces)", "flag": "🌐", "currency": "USD", "symbol": "$"},
-    {"code": "US", "name": "Amerika Birleşik Devletleri (US)", "flag": "🇺🇸", "currency": "USD", "symbol": "$"},
-    {"code": "CA", "name": "Kanada (Canada)", "flag": "🇨🇦", "currency": "CAD", "symbol": "CA$"},
-    {"code": "MX", "name": "Meksika (Mexico)", "flag": "🇲🇽", "currency": "MXN", "symbol": "MX$"},
-    {"code": "UK", "name": "İngiltere (United Kingdom)", "flag": "🇬🇧", "currency": "GBP", "symbol": "£"},
-    {"code": "DE", "name": "Almanya (Germany)", "flag": "🇩🇪", "currency": "EUR", "symbol": "€"},
-    {"code": "FR", "name": "Fransa (France)", "flag": "🇫🇷", "currency": "EUR", "symbol": "€"},
-    {"code": "IT", "name": "İtalya (Italy)", "flag": "🇮🇹", "currency": "EUR", "symbol": "€"},
-    {"code": "ES", "name": "İspanya (Spain)", "flag": "🇪🇸", "currency": "EUR", "symbol": "€"},
-    {"code": "AU", "name": "Avustralya (Australia)", "flag": "🇦🇺", "currency": "AUD", "symbol": "A$"}
-  ],
   "layout_and_spacing": {
     "dashboard_grid": "MODE B: High Density Grid (grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6)",
     "container_padding": "px-4 sm:px-6 lg:px-8 py-6 max-w-[1600px] mx-auto",
     "card_padding": "p-5 sm:p-6",
-    "header_height": "h-16 border-b border-slate-200 bg-white shadow-sm sticky top-0 z-40",
+    "header_height": "h-16 border-b border-slate-200 bg-white/95 backdrop-blur shadow-sm sticky top-0 z-40",
     "sub_header": "bg-slate-900 text-white px-6 py-3 border-b border-slate-800"
   },
-  "key_components_to_implement": {
-    "top_navbar": {
-      "title": "Amazon Seller Suite - Kar/Zarar & Bakiye Takip",
-      "elements": [
-        "Store Switcher Dropdown (e.g. 'Alfa Global Store', 'Mega Retail US')",
-        "Marketplace Selector Pill/Dropdown with Flags (US 🇺🇸, CA 🇨🇦, DE 🇩🇪, etc.)",
-        "Currency Auto-Toggle / Consolidated FX Rate Converter Indicator",
-        "User Profile & Logout Action"
+  "core_views_blueprint": [
+    {
+      "id": "dashboard",
+      "title": "Ana Dashboard & Mağaza Karlılık Paneli",
+      "features": [
+        "KPI Summary Bar (Total Revenue, Expenses, Net Profit, Margin, Amazon Balance)",
+        "Tüm Mağazaların Tarih Filtreli Karlılık Grafiği (Aggregate All-Store Date-Filtered Profitability Chart in USD)",
+        "Global Date Range Picker for Profitability Panel (Bu Ay, Geçen Ay, Son 3 Ay, Yıllık, Özel Tarih)",
+        "Multi-Store Comparative Profit Lines + Total Aggregate Net Profit Line (Recharts)",
+        "Company Treasury Cash Balance Card (Şirket Kasası: Distinct TL and USD Balances)",
+        "Quick Access to Recent Transactions & Store Disbursals"
       ]
     },
-    "kpi_bar": {
-      "cards": [
-        {"title": "Toplam Satış (Revenue)", "key": "revenue", "color": "emerald"},
-        {"title": "Toplam Gider (Expenses)", "key": "expenses", "color": "rose"},
-        {"title": "Net Kar (Net Profit)", "key": "net_profit", "color": "indigo"},
-        {"title": "Kar Marjı % (Profit Margin)", "key": "margin", "color": "amber"},
-        {"title": "Amazon Aktif Bakiye (Balance)", "key": "amazon_balance", "color": "amazon"}
+    {
+      "id": "company_finance",
+      "title": "Şirket Sermaye & Borç / Alacak Yönetimi (Yeni Menü)",
+      "route": "/company",
+      "sub_views": [
+        {
+          "tab_id": "capital_shares",
+          "title": "Sermaye Katkıları & Hisse Oranları",
+          "key_rules": [
+            "Every capital record links to a Person (Partner / Ortak or External Investor / Dış Yatırımcı) and a specific Store.",
+            "Capital Investment ('Sermaye Yatırımı') contributes to equity share calculation.",
+            "Equity percentage is calculated per-store based on net funded USD equivalent: Ownership % = (Net Capital Contributed by Person in Store / Total Net Capital Invested in Store) * 100%.",
+            "Historical TL investments are converted to USD at historical contribution FX rate for fair comparability.",
+            "Displays visual share distribution table & interactive ownership progress bars."
+          ],
+          "ui_components": [
+            "Person & Capital Entry Form Dialog (data-testid='add-capital-button')",
+            "Store-based Equity Share Table (data-testid='store-equity-table')",
+            "Investor Summary Cards showing total USD equity pool per store"
+          ]
+        },
+        {
+          "tab_id": "debts_receivables",
+          "title": "Şirketin Kişilerle Borç / Alacak Takibi",
+          "key_rules": [
+            "Tracks only the company's debts and receivables with people, not separate personal accounts.",
+            "Debt ('Borç') is strictly repayable and does NOT affect store equity ownership shares.",
+            "Dual-Currency Option: User selects TL or USD per record; UI presents separate TL and USD cash balance cards.",
+            "Supports partial repayment logs, due dates, and status indicators (Ödendi, Kısmi Ödendi, Gecikmede, Bekliyor)."
+          ],
+          "ui_components": [
+            "New Debt/Receivable Dialog with Currency Selector (TL / USD) (data-testid='add-debt-button')",
+            "Debts & Receivables Ledger Table with status badges (data-testid='debts-receivables-table')",
+            "Partial Repayment Action Modal (data-testid='add-payment-modal')"
+          ]
+        },
+        {
+          "tab_id": "treasury_close",
+          "title": "Aylık Mağaza Kasa Kapanışı & Otomatik Muhasebe Kaydı",
+          "key_rules": [
+            "Automatically transfers closed previous month's store net profit/loss into the main company vault / treasury.",
+            "Idempotent single accounting entry per store per month upon month close.",
+            "Store profit/loss changes the noncash USD book ledger; physical TL/USD cash remains separate.",
+            "Non-cash ledger history table with audit trail."
+          ],
+          "ui_components": [
+            "Monthly Store P&L Ledger Closing Card & Manual Trigger (data-testid='run-monthly-close-button')",
+            "Treasury Transaction Log Table (data-testid='treasury-ledger-table')"
+          ]
+        }
       ]
     },
-    "core_views": [
-      {
-        "id": "dashboard",
-        "title": "Ana Dashboard",
-        "widgets": [
-          "KPI Summaries with Month-over-Month Delta Badges",
-          "Gelir ve Kar Trend Grafiği (Recharts Area/Line Chart)",
-          "Pazar Yeri Dağılımı (Recharts Pie/Donut Chart by Marketplace)",
-          "Son İşlemler & Hızlı Ekleme Kısa Yolları",
-          "Amazon Ödeme (Disbursement) Bekleyen Bakiye Kartı"
-        ]
-      },
-      {
-        "id": "income_entry",
-        "title": "Gelir Kaydı (Sales & Income)",
-        "features": [
-          "Manual Income Entry Form (Date, Marketplace, Order ID, SKU, Product Name, Amount, Currency, Category)",
-          "CSV Import Modal for Amazon Orders Report",
-          "Filtering & Search by SKU, Order ID, Date, Marketplace"
-        ]
-      },
-      {
-        "id": "expense_entry",
-        "title": "Gider Kaydı (Expenses)",
-        "features": [
-          "Expense Form (FBA Fees, PPC Advertising, COGS / Ürün Maliyeti, Shipping, Refunds, Monthly Subscription)",
-          "Categorized Expense Breakdown",
-          "CSV Import for Fee Reports"
-        ]
-      },
-      {
-        "id": "payouts_balance",
-        "title": "Amazon Ödemeleri & Bakiye Takibi",
-        "features": [
-          "Record Amazon Disbursement / Settlement Deposit",
-          "Disbursement Status (Initiated, Processing, In Bank)",
-          "Net Payout vs Pending Reserve Balance Tracker"
-        ]
-      },
-      {
-        "id": "p_and_l_report",
-        "title": "P&L / Kar-Zarar Raporu",
-        "features": [
-          "Detailed Waterfall P&L Table (Gross Sales -> Discounts -> Refunds -> Net Sales -> COGS -> FBA Fees -> PPC -> Net Profit)",
-          "Date Range Selector (Bugün, Bu Hafta, Bu Ay, Son 90 Gün, Özel)",
-          "Marketplace Side-by-Side Comparison Columns"
-        ]
-      },
-      {
-        "id": "store_management",
-        "title": "Mağaza & Pazar Yeri Yönetimi",
-        "features": [
-          "Create New Seller Store (e.g., 'E-Com Empire EU')",
-          "Assign Active Marketplaces per Store (US, CA, MX, UK, DE, FR, IT, ES, AU)",
-          "Default Currency Setting per Marketplace"
-        ]
-      }
-    ]
-  },
+    {
+      "id": "p_and_l_report",
+      "title": "Kar ve Zarar Raporu & Detaylı Sipariş Raporu",
+      "route": "/report",
+      "features": [
+        "Waterfall P&L Summary Table (Gross Revenue -> Discounts -> Refunds -> Net Sales -> COGS -> Amazon Fees -> Advertising -> Net Profit)",
+        "Date Range Selector & Store Filter",
+        "Detailed Order Breakdown Tool (Tüm Siparişlerin Ayrıntılı Dökümü Table)",
+        "Excel Export Button (XLSX Download) supplying full order details, marketplace breakdown, product/shipping/extra costs, recoveries, FX and net profit columns; SKU remains removed (data-testid='download-excel-report-button')"
+      ]
+    }
+  ],
   "interactive_states_and_accessibility": {
-    "data_testid_rule": "MANDATORY: Every input, button, tab, dropdown, table row, and modal must contain unique kebab-case data-testid attributes (e.g. data-testid='store-switcher-dropdown', data-testid='income-submit-button', data-testid='kpi-net-profit-card').",
-    "dropdown_backgrounds": "NEVER use transparent backgrounds on dropdowns, select menus, or popovers. Always use solid bg-white dark:bg-slate-900 with shadow-lg and border border-slate-200.",
-    "hover_contrast": "Ensure explicit hover states like hover:bg-slate-900 hover:text-white or hover:bg-emerald-700 hover:text-white.",
-    "toast_notifications": "Use sonner (imported from @/components/ui/sonner) for instant feedback on record saving, CSV imports, store switches, and errors."
-  },
-  "image_urls": {
-    "analytics_laptop": "https://images.unsplash.com/photo-1551288049-bebda4e38f71?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHxfHxlY29tbWVyY2UlMjBzZWxsZXIlMjBhbmFseXRpY3MlMjBkYXNoYm9hcmQlMjB3b3Jrc3BhY2V8ZW58MHx8fHwxNzkxMTI5MTEwfDA&ixlib=rb-4.1.0&q=85",
-    "finance_charts": "https://images.unsplash.com/photo-1526628953301-3e589a6a8b74?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHw0fHxlY29tbWVyY2UlMjBzZWxsZXIlMjBhbmFseXRpY3MlMjBkYXNoYm9hcmQlMjB3b3Jrc3BhY2V8ZW58MHx8fHwxNzkxMTI5MTEwfDA&ixlib=rb-4.1.0&q=85",
-    "workspace_laptop": "https://images.unsplash.com/photo-1608222351212-18fe0ec7b13b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHwyfHxlY29tbWVyY2UlMjBzZWxsZXIlMjBhbmFseXRpY3MlMjBkYXNoYm9hcmQlMjB3b3Jrc3BhY2V8ZW58MHx8fHwxNzkxMTI5MTEwfDA&ixlib=rb-4.1.0&q=85"
+    "data_testid_rule": "MANDATORY: Every input, button, tab, dropdown, table row, and modal must contain unique kebab-case data-testid attributes.",
+    "dropdown_backgrounds": "NEVER use transparent backgrounds on dropdowns, select menus, or popovers. Always use solid bg-white with shadow-lg and border border-slate-200.",
+    "hover_contrast": "Ensure explicit hover states like hover:bg-slate-900 hover:text-white or hover:bg-emerald-700 hover:text-white."
   },
   "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
     "Use modern pill-shaped or sharp rounded buttons with responsive hover & active animations.",

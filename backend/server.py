@@ -27,6 +27,9 @@ from proxy_origin import OriginAliasMiddleware
 from fx_service import FxQuote, FxError, get_rate
 from usd_ledger import attach_usd, enrich_records, summary_usd, FIELDS as USD_COST_FIELDS
 from ledger_search import search_history
+from company.routes import company_router
+from company.common import initialize_indexes as initialize_company_indexes
+from reporting import report_router
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -346,6 +349,12 @@ async def update_store(store_id: str, data: StoreIn, user=Depends(get_current_us
 
 @api.delete("/stores/{store_id}")
 async def delete_store(store_id: str, user=Depends(get_current_user)):
+    scope = {"store_id": store_id, "user_id": user["id"]}
+    capital = await db.company_capital.find_one({**scope, "entries.0": {"$exists": True}}, {"_id": 0, "store_id": 1})
+    debt = await db.company_debts.find_one(scope, {"_id": 0, "id": 1})
+    closing = await db.company_closings.find_one(scope, {"_id": 0, "id": 1})
+    if capital or debt or closing:
+        raise HTTPException(409, "Sermaye, borç veya kapanış geçmişi olan mağaza silinemez; şirket kayıtları korunmalıdır")
     r = await db.stores.delete_one({"id": store_id, "user_id": user["id"]})
     if r.deleted_count == 0:
         raise HTTPException(404, "Mağaza bulunamadı")
@@ -554,6 +563,8 @@ async def import_csv(
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
+api.include_router(company_router(db, get_current_user))
+api.include_router(report_router(db, get_current_user))
 app.include_router(api)
 
 @app.middleware("http")
@@ -574,6 +585,7 @@ app.add_middleware(OriginAliasMiddleware, aliases=CORS_ORIGIN_ALIASES)
 
 @app.on_event("startup")
 async def startup():
+    await initialize_company_indexes(db)
     await db.users.create_index("email", unique=True)
     await db.fx_rates.create_index([("source", 1), ("base", 1), ("quote", 1), ("requested_date", 1)], unique=True)
     await db.login_attempts.create_index("identifier", unique=True)

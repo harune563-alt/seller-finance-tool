@@ -6,6 +6,7 @@ import { MP_BY_CODE, formatMoney } from "@/constants/marketplaces";
 import KpiCard from "@/components/KpiCard";
 import { FinanceCurrency } from "@/components/FinanceCurrency";
 import { MissingFxAlert, NativeBalances, formatUsd } from "@/components/FxStatus";
+import { PortfolioPanel } from "@/components/reports/PortfolioPanel";
 import { Button } from "@/components/ui/button";
 import {
   TrendingUp, TrendingDown, DollarSign, Percent, Wallet, Receipt,
@@ -100,6 +101,8 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <PortfolioPanel />
+      <h2 className="text-lg font-display font-bold" data-testid="dashboard-selected-store-title">{activeStore?.name} · Seçili Mağaza</h2>
       <FinanceCurrency summary={summary} value={selectedCurrency} onChange={setSelectedCurrency} prefix="dashboard" />
       <MissingFxAlert summary={summary} prefix="dashboard" />
       {error && <p role="alert" data-testid="dashboard-error" className="text-sm text-rose-600">{error}</p>}
