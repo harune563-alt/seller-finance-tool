@@ -7,7 +7,7 @@ from pydantic import BaseModel, ValidationError
 from pymongo.errors import DuplicateKeyError
 from company.models import (PersonIn, PersonOut, CapitalIn, CapitalUpdateIn, CapitalOut, DebtIn, DebtUpdateIn, DebtOut,
                             AmountIn, CashIn, CashUpdateIn, PaymentUpdateIn, CompanyOverview, LedgerEntry, ClosingOut,
-                            ClosingUpdateIn, BulkIdsIn, JobOut, JobAccepted)
+                            ClosingUpdateIn, BulkIdsIn, BulkChangesIn, JobOut, JobAccepted)
 from company.common import cash, cents, names, now, owned
 from company.capital import post_capital, capital_summary, update_capital_entry, delete_capital_entry
 from company.treasury import create_debt, settle_debt, update_debt, update_debt_payment, delete_debt_payment, debt_output, company_overview
@@ -23,6 +23,11 @@ class CronEnvelope(BaseModel):
 
 def company_router(db, get_user):
     router = APIRouter(prefix="/company", tags=["company"])
+
+    def checked_changes(data, allowed):
+        unknown = set(data.changes) - allowed
+        if unknown: raise HTTPException(422, f"Toplu güncellemede desteklenmeyen alan: {sorted(unknown)[0]}")
+        return data.changes
 
     @router.get("/people", response_model=list[PersonOut])
     async def people(user=Depends(get_user)):
@@ -57,6 +62,17 @@ def company_router(db, get_user):
         if result.deleted_count == 0: raise HTTPException(404, "Silinecek kişi bulunamadı")
         return {"ok": True, "deleted": result.deleted_count}
 
+    @router.post("/people/bulk-update")
+    async def bulk_update_people(data: BulkChangesIn, user=Depends(get_user)):
+        changes = checked_changes(data, {"name", "role", "note"})
+        ids = list(dict.fromkeys(data.ids))
+        docs = await db.company_people.find({"id": {"$in": ids}, "user_id": user["id"]}, {"_id": 0}).to_list(len(ids))
+        if len(docs) != len(ids): raise HTTPException(404, "Seçilen kişilerden biri bulunamadı")
+        for doc in docs:
+            await db.company_people.update_one({"id": doc["id"], "user_id": user["id"]}, {"$set": PersonIn(**{**doc, **changes}).model_dump()})
+        return {"ok": True, "updated": len(ids), "ids": ids}
+
+
     @router.get("/capital", response_model=CapitalOut)
     async def capital(store_id: str, user=Depends(get_user)):
         return CapitalOut(**await capital_summary(db, user["id"], store_id))
@@ -88,6 +104,21 @@ def company_router(db, get_user):
         if not deleted: raise HTTPException(404, "Silinecek sermaye kaydı bulunamadı")
         return {"ok": True, "deleted": deleted}
 
+    @router.post("/capital/bulk-update")
+    async def bulk_update_capital(data: BulkChangesIn, user=Depends(get_user)):
+        changes = checked_changes(data, {"amount", "date", "note", "person_id", "store_id", "currency", "direction"})
+        updated = 0
+        for entry_id in dict.fromkeys(data.ids):
+            source = await db.company_capital.find_one({"user_id": user["id"], "entries.id": entry_id}, {"_id": 0})
+            if not source: raise HTTPException(404, "Seçilen sermaye kayıtlarından biri bulunamadı")
+            entry = next(item for item in source["entries"] if item["id"] == entry_id)
+            payload = {"amount": cash(entry["amount_cents"]), "date": entry["date"], "note": entry.get("note", ""), "person_id": source["person_id"], "store_id": source["store_id"], "currency": source["currency"], "direction": entry["direction"]}
+            payload.update(changes)
+            await update_capital_entry(db, user["id"], entry_id, CapitalUpdateIn(**payload))
+            updated += 1
+        return {"ok": True, "updated": updated, "ids": list(dict.fromkeys(data.ids))}
+
+
     @router.get("/debts", response_model=list[DebtOut])
     async def debts(currency: Optional[Literal["USD", "TRY"]] = None, direction: Optional[Literal["payable", "receivable"]] = None, user=Depends(get_user)):
         query = {"user_id": user["id"]}
@@ -117,6 +148,20 @@ def company_router(db, get_user):
         if result.deleted_count == 0: raise HTTPException(404, "Silinecek borç/alacak bulunamadı")
         return {"ok": True, "deleted": result.deleted_count}
 
+    @router.post("/debts/bulk-update")
+    async def bulk_update_debts(data: BulkChangesIn, user=Depends(get_user)):
+        changes = checked_changes(data, {"amount", "date", "note", "person_id", "store_id", "direction", "currency", "due_date", "cash_effect"})
+        updated = 0
+        for debt_id in dict.fromkeys(data.ids):
+            doc = await db.company_debts.find_one({"id": debt_id, "user_id": user["id"]}, {"_id": 0})
+            if not doc: raise HTTPException(404, "Seçilen borç/alacak kayıtlarından biri bulunamadı")
+            payload = {"amount": cash(doc["principal_cents"]), "date": doc["date"], "note": doc.get("note", ""), "person_id": doc["person_id"], "store_id": doc.get("store_id"), "direction": doc["direction"], "currency": doc["currency"], "due_date": doc.get("due_date"), "cash_effect": doc.get("cash_effect", False)}
+            payload.update(changes)
+            await update_debt(db, user["id"], debt_id, DebtUpdateIn(**payload))
+            updated += 1
+        return {"ok": True, "updated": updated, "ids": list(dict.fromkeys(data.ids))}
+
+
     @router.post("/debts/{debt_id}/payments", response_model=DebtOut)
     async def pay_debt(debt_id: str, data: AmountIn, user=Depends(get_user)):
         return DebtOut(**await settle_debt(db, user["id"], debt_id, data))
@@ -128,6 +173,21 @@ def company_router(db, get_user):
     @router.delete("/debts/{debt_id}/payments/{payment_id}", response_model=DebtOut)
     async def remove_debt_payment(debt_id: str, payment_id: str, user=Depends(get_user)):
         return DebtOut(**await delete_debt_payment(db, user["id"], debt_id, payment_id))
+
+    @router.post("/debt-payments/bulk-update")
+    async def bulk_update_debt_payments(data: BulkChangesIn, user=Depends(get_user)):
+        changes = checked_changes(data, {"amount", "date", "note"})
+        updated = 0
+        for payment_id in dict.fromkeys(data.ids):
+            doc = await db.company_debts.find_one({"user_id": user["id"], "payments.id": payment_id}, {"_id": 0})
+            if not doc: raise HTTPException(404, "Seçilen ödeme/tahsilatlardan biri bulunamadı")
+            payment = next(item for item in doc["payments"] if item["id"] == payment_id)
+            payload = {"amount": cash(payment["amount_cents"]), "date": payment["date"], "note": payment.get("note", "")}
+            payload.update(changes)
+            await update_debt_payment(db, user["id"], doc["id"], payment_id, PaymentUpdateIn(**payload))
+            updated += 1
+        return {"ok": True, "updated": updated, "ids": list(dict.fromkeys(data.ids))}
+
 
     @router.get("/overview", response_model=CompanyOverview)
     async def overview(user=Depends(get_user)):
@@ -162,6 +222,21 @@ def company_router(db, get_user):
         if result.deleted_count == 0: raise HTTPException(404, "Silinecek kasa hareketi bulunamadı")
         return {"ok": True, "deleted": result.deleted_count}
 
+    @router.post("/cash/bulk-update")
+    async def bulk_update_cash(data: BulkChangesIn, user=Depends(get_user)):
+        changes = checked_changes(data, {"amount", "date", "note", "currency", "direction"})
+        updated = 0
+        for cash_id in dict.fromkeys(data.ids):
+            doc = await db.company_cash.find_one({"id": cash_id, "user_id": user["id"]}, {"_id": 0})
+            if not doc: raise HTTPException(404, "Seçilen kasa hareketlerinden biri bulunamadı")
+            payload = {"amount": cash(doc["amount_cents"]), "date": doc["date"], "note": doc.get("note", ""), "currency": doc["currency"], "direction": doc["direction"]}
+            payload.update(changes)
+            data_model = CashUpdateIn(**payload)
+            await db.company_cash.update_one({"id": cash_id, "user_id": user["id"]}, {"$set": {**data_model.model_dump(mode="json", exclude={"amount"}), "amount_cents": cents(data_model.amount)}})
+            updated += 1
+        return {"ok": True, "updated": updated, "ids": list(dict.fromkeys(data.ids))}
+
+
     @router.get("/closings", response_model=list[ClosingOut])
     async def closings(user=Depends(get_user)):
         return [ClosingOut(**d) for d in await db.company_closings.find({"user_id": user["id"]}, {"_id": 0}).sort([("period", -1), ("store_name", 1)]).to_list(None)]
@@ -187,6 +262,22 @@ def company_router(db, get_user):
         result = await db.company_closings.delete_many({"id": {"$in": list(dict.fromkeys(data.ids))}, "user_id": user["id"]})
         if result.deleted_count == 0: raise HTTPException(404, "Silinecek kapanış kaydı bulunamadı")
         return {"ok": True, "deleted": result.deleted_count}
+
+    @router.post("/closings/bulk-update")
+    async def bulk_update_closings(data: BulkChangesIn, user=Depends(get_user)):
+        changes = checked_changes(data, {"revenue", "expenses", "net_profit"})
+        updated = 0
+        for closing_id in dict.fromkeys(data.ids):
+            doc = await db.company_closings.find_one({"id": closing_id, "user_id": user["id"]}, {"_id": 0})
+            if not doc: raise HTTPException(404, "Seçilen kapanış kayıtlarından biri bulunamadı")
+            merged = {"revenue": doc.get("revenue"), "expenses": doc.get("expenses"), "net_profit": doc.get("net_profit")}
+            merged.update(changes)
+            model = ClosingUpdateIn(**merged)
+            final_changes = {key: value for key, value in model.model_dump().items() if value is not None}
+            await db.company_closings.update_one({"id": closing_id, "user_id": user["id"]}, {"$set": {**final_changes, "updated_at": now()}})
+            updated += 1
+        return {"ok": True, "updated": updated, "ids": list(dict.fromkeys(data.ids))}
+
 
     @router.post("/closings/run", response_model=JobAccepted, status_code=202)
     async def close_now(background_tasks: BackgroundTasks, user=Depends(get_user)):

@@ -9,6 +9,7 @@ import { MissingFxAlert, NativeBalances } from "@/components/FxStatus";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
 import { TransactionList } from "@/components/transactions/TransactionList";
 import { TransactionEditDialog } from "@/components/transactions/TransactionEditDialog";
+import { BulkEditDialog } from "@/components/BulkEditDialog";
 import { CsvImport } from "@/components/transactions/CsvImport";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ export default function Transactions() {
   const [filter, setFilter] = useState("all");
   const [revision, setRevision] = useState(0);
   const [editing, setEditing] = useState(null);
+  const [bulkEditing, setBulkEditing] = useState(false);
   const [deleting, setDeleting] = useState([]);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [deletingBusy, setDeletingBusy] = useState(false);
@@ -71,12 +73,13 @@ export default function Transactions() {
       {error && <div role="alert" data-testid="tx-load-error" className="text-rose-700 text-sm">{error}<Button variant="ghost" onClick={refresh} data-testid="tx-retry">Tekrar dene</Button></div>}
       <TransactionForm onSaved={refresh} />
       <RecordFilters history={history} prefix="tx" searchLabel="Order ID ile ara" categoryLabel="İşlem Türü" options={TRANSACTION_CATEGORIES} unit="sipariş / kayıt" />
-      {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3" data-testid="tx-selection-toolbar"><span className="text-sm font-medium text-rose-800">{selectedIds.size} işlem seçildi</span><Button variant="destructive" onClick={() => setDeleting([...selectedIds])} data-testid="bulk-delete-tx"><span aria-hidden="true">×</span> Seçilenleri Sil</Button></div>}
+      {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3" data-testid="tx-selection-toolbar"><span className="text-sm font-medium text-rose-800">{selectedIds.size} işlem seçildi</span><div className="flex gap-2"><Button variant="outline" onClick={() => setBulkEditing(true)} data-testid="bulk-edit-tx">Toplu Düzenle</Button><Button variant="destructive" onClick={() => setDeleting([...selectedIds])} data-testid="bulk-delete-tx"><span aria-hidden="true">×</span> Seçilenleri Sil</Button></div></div>}
       <Tabs value={filter} onValueChange={setFilter}><TabsList data-testid="tx-record-filters"><TabsTrigger value="all" data-testid="tab-all">Tüm İşlemler</TabsTrigger><TabsTrigger value="profit" data-testid="tab-profit">Kârlı</TabsTrigger><TabsTrigger value="loss" data-testid="tab-loss">Zararlı</TabsTrigger></TabsList></Tabs>
       <TransactionList rows={history.items} total={history.total} filter="all" loading={history.loading} onEdit={setEditing} onDelete={row => setDeleting([row.id])} selectedIds={selectedIds} onToggle={toggleSelected} onToggleGroup={toggleGroup} onToggleAll={toggleAll} />
       <RecordPagination history={history} prefix="tx" />
     </>}
     {editing && <TransactionEditDialog key={editing.id} row={editing} onClose={() => setEditing(null)} onSaved={refresh} />}
+    {bulkEditing && <BulkEditDialog title="İşlemleri Toplu Düzenle" description="Yalnızca doldurulan alanlar uygulanır" endpoint="/transactions/bulk-update" ids={[...selectedIds]} fields={[{ key: "date", label: "Tarih", type: "date" }, { key: "marketplace", label: "Pazar Yeri", type: "select", options: (activeStore?.marketplaces || []).map(code => ({ value: code, label: code })) }, { key: "category", label: "İşlem Türü", type: "select", options: TRANSACTION_CATEGORIES.map(value => ({ value, label: value })) }, { key: "amount", label: "Tutar", type: "number" }, { key: "currency", label: "Para Birimi", type: "select", options: ["USD", "CAD", "MXN", "GBP", "EUR", "AUD", "JPY", "AED", "SAR", "TRY", "SEK", "PLN"].map(value => ({ value, label: value })) }, { key: "description", label: "Açıklama" }, { key: "order_id", label: "Order ID" }, { key: "product_cost", label: "Ürün Maliyeti (USD)", type: "number" }, { key: "shipping_cost", label: "Kargo Maliyeti (USD)", type: "number" }, { key: "extra_cost", label: "Ekstra Maliyet (USD)", type: "number" }, { key: "product_cost_recovery", label: "Ürün Maliyeti İadesi (USD)", type: "number" }, { key: "shipping_cost_recovery", label: "Kargo İadesi (USD)", type: "number" }]} onClose={() => setBulkEditing(false)} onSaved={() => { setBulkEditing(false); setSelectedIds(new Set()); refresh(); }} />}
     <Dialog open={deleting.length > 0} onOpenChange={open => { if (!open && !deletingBusy) setDeleting([]); }}><DialogContent data-testid="delete-transaction-dialog" className="bg-white"><DialogHeader><DialogTitle>{deleting.length} işlem silinsin mi?</DialogTitle><DialogDescription>Seçilen kayıtlar ve bağlı maliyetleri toplamlarınızdan kalıcı olarak kaldırılacak.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" disabled={deletingBusy} onClick={() => setDeleting([])} data-testid="cancel-delete-transaction">Vazgeç</Button><Button variant="destructive" disabled={deletingBusy} onClick={remove} data-testid="confirm-delete-transaction">{deletingBusy ? "Siliniyor…" : "Sil"}</Button></DialogFooter></DialogContent></Dialog>
   </div>;
 }

@@ -1,6 +1,6 @@
 from datetime import date as calendar_date, datetime, timezone
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -138,6 +138,10 @@ class ClosingUpdateIn(BaseModel):
 
 class BulkIdsIn(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class BulkChangesIn(BulkIdsIn):
+    changes: dict[str, Any] = Field(min_length=1, max_length=20)
 
 
 class PaymentOut(BaseModel):

@@ -20,6 +20,7 @@ import { useRecordSearch } from "@/hooks/useRecordSearch";
 import { RecordFilters, RecordPagination } from "@/components/RecordFilters";
 import { PayoutHistory } from "@/components/payouts/PayoutHistory";
 import { TransactionEditDialog } from "@/components/transactions/TransactionEditDialog";
+import { BulkEditDialog } from "@/components/BulkEditDialog";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -34,6 +35,7 @@ export default function Payouts() {
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const [editingReference, setEditingReference] = useState(null);
+  const [bulkEditing, setBulkEditing] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [deleting, setDeleting] = useState([]);
   const [deletingBusy, setDeletingBusy] = useState(false);
@@ -158,10 +160,11 @@ export default function Payouts() {
       </form>
 
       <RecordFilters history={history} prefix="payout" searchLabel="Ödeme referansı veya not" categoryLabel="Ödeme Durumu" options={STATUSES} unit="ödeme" />
-      {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3" data-testid="payout-selection-toolbar"><span className="text-sm font-medium text-rose-800">{selectedIds.size} ödeme seçildi</span><Button variant="destructive" onClick={() => setDeleting([...selectedIds])} data-testid="bulk-delete-payouts">Seçilenleri Sil</Button></div>}
+      {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3" data-testid="payout-selection-toolbar"><span className="text-sm font-medium text-rose-800">{selectedIds.size} ödeme seçildi</span><div className="flex gap-2"><Button variant="outline" onClick={() => setBulkEditing(true)} data-testid="bulk-edit-payouts">Toplu Düzenle</Button><Button variant="destructive" onClick={() => setDeleting([...selectedIds])} data-testid="bulk-delete-payouts">Seçilenleri Sil</Button></div></div>}
       <PayoutHistory history={history} onEdit={setEditingReference} onDelete={id => setDeleting([id])} selectedIds={selectedIds} onToggle={toggleSelected} onToggleAll={toggleAll} />
       <RecordPagination history={history} prefix="payout" />
       {editingReference && <TransactionEditDialog key={editingReference.id} row={editingReference} onClose={() => setEditingReference(null)} onSaved={fetchData} />}
+      {bulkEditing && <BulkEditDialog title="Ödemeleri Toplu Düzenle" description="Yalnızca doldurulan alanlar uygulanır" endpoint="/transactions/bulk-update" ids={[...selectedIds]} fields={[{ key: "date", label: "Tarih", type: "date" }, { key: "marketplace", label: "Pazar Yeri", type: "select", options: (activeStore?.marketplaces || []).map(code => ({ value: code, label: code })) }, { key: "category", label: "Ödeme Durumu", type: "select", options: STATUSES.map(value => ({ value, label: value })) }, { key: "amount", label: "Tutar", type: "number" }, { key: "currency", label: "Para Birimi", type: "select", options: ["USD", "CAD", "MXN", "GBP", "EUR", "AUD", "JPY", "AED", "SAR", "TRY", "SEK", "PLN"].map(value => ({ value, label: value })) }, { key: "payment_reference", label: "Ödeme Referansı" }, { key: "description", label: "Not" }]} onClose={() => setBulkEditing(false)} onSaved={() => { setBulkEditing(false); setSelectedIds(new Set()); fetchData(); }} />}
       <Dialog open={deleting.length > 0} onOpenChange={open => { if (!open && !deletingBusy) setDeleting([]); }}><DialogContent className="bg-white" data-testid="delete-payout-dialog"><DialogHeader><DialogTitle>{deleting.length} ödeme silinsin mi?</DialogTitle><DialogDescription>Seçilen Amazon ödeme kayıtları kalıcı olarak silinecek.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" disabled={deletingBusy} onClick={() => setDeleting([])}>Vazgeç</Button><Button variant="destructive" disabled={deletingBusy} onClick={() => remove(deleting)} data-testid="confirm-delete-payout">{deletingBusy ? "Siliniyor…" : "Sil"}</Button></DialogFooter></DialogContent></Dialog>
     </div>
   );

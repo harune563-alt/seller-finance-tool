@@ -12,7 +12,7 @@ import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date as calendar_date
-from typing import List, Optional, Literal
+from typing import Any, List, Optional, Literal
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Query
 from starlette.middleware.cors import CORSMiddleware
@@ -265,6 +265,10 @@ class BulkDeleteIn(BaseModel):
     ids: List[str] = Field(min_length=1, max_length=100)
 
 
+class BulkChangesIn(BulkDeleteIn):
+    changes: dict[str, Any] = Field(min_length=1, max_length=20)
+
+
 # ---------------------------------------------------------------------------
 # App & Router
 # ---------------------------------------------------------------------------
@@ -377,7 +381,22 @@ async def bulk_delete_stores(data: BulkDeleteIn, user=Depends(get_current_user))
     await db.transactions.delete_many({"store_id": {"$in": ids}, "user_id": user["id"]})
     return {"ok": True, "deleted": result.deleted_count}
 
-# ------------------ Transactions ------------------
+@api.post("/stores/bulk-update")
+async def bulk_update_stores(data: BulkChangesIn, user=Depends(get_current_user)):
+    allowed = {"name", "marketplaces", "default_currency"}
+    unknown = set(data.changes) - allowed
+    if unknown: raise HTTPException(422, f"Toplu mağaza güncellemesinde desteklenmeyen alan: {sorted(unknown)[0]}")
+    ids = list(dict.fromkeys(data.ids))
+    docs = await db.stores.find({"id": {"$in": ids}, "user_id": user["id"]}, {"_id": 0}).to_list(len(ids))
+    if len(docs) != len(ids): raise HTTPException(404, "Seçilen mağazalardan biri bulunamadı")
+    for doc in docs:
+        merged = {"name": doc["name"], "marketplaces": doc["marketplaces"], "default_currency": doc["default_currency"]}
+        merged.update(data.changes)
+        validated = StoreIn(**merged)
+        await db.stores.update_one({"id": doc["id"], "user_id": user["id"]}, {"$set": validated.model_dump()})
+    return {"ok": True, "updated": len(ids), "ids": ids}
+
+
 async def validate_transaction(data: TransactionIn, user):
     store = await db.stores.find_one({"id": data.store_id, "user_id": user["id"]}, {"_id": 0})
     if not store:
@@ -494,6 +513,39 @@ async def bulk_delete_transactions(data: BulkDeleteIn, user=Depends(get_current_
     if result.deleted_count == 0:
         raise HTTPException(404, "Silinecek işlem bulunamadı")
     return {"ok": True, "deleted": result.deleted_count}
+
+
+@api.post("/transactions/bulk-update")
+async def bulk_update_transactions(data: BulkChangesIn, user=Depends(get_current_user)):
+    allowed = set(TransactionIn.model_fields)
+    unknown = set(data.changes) - allowed
+    if unknown: raise HTTPException(422, f"Toplu işlem güncellemesinde desteklenmeyen alan: {sorted(unknown)[0]}")
+    ids = list(dict.fromkeys(data.ids))
+    docs = await db.transactions.find({"id": {"$in": ids}, "user_id": user["id"]}, {"_id": 0}).to_list(len(ids))
+    if len(docs) != len(ids): raise HTTPException(404, "Seçilen işlemlerden biri bulunamadı")
+    recalculated = {"store_id", "marketplace", "type", "category", "amount", "currency", "date", *COST_FIELDS, *RECOVERY_FIELDS}
+    prepared = []
+    for existing in docs:
+        base = {key: existing.get(key) for key in TransactionIn.model_fields}
+        for key in (*COST_FIELDS, *RECOVERY_FIELDS): base[key] = existing.get(key, 0)
+        for key in ("description", "order_id", "payment_reference"): base[key] = existing.get(key, "")
+        base.update(data.changes)
+        merged = TransactionIn(**base)
+        await validate_transaction(merged, user)
+        candidate = {"id": existing["id"], "user_id": user["id"], **merged.model_dump(), "cost_currency": existing.get("cost_currency", "USD"), "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat())}
+        if recalculated.intersection(data.changes):
+            candidate["fx"] = None
+            candidate.pop("amount_usd", None)
+            candidate.pop("usd_costs", None)
+            if any(key in data.changes for key in (*COST_FIELDS, *RECOVERY_FIELDS)): candidate["cost_currency"] = "USD"
+        try:
+            prepared.append(await attach_usd(db, candidate))
+        except FxError as exc:
+            raise HTTPException(422, str(exc))
+    for document in prepared:
+        changes = {key: value for key, value in document.items() if key not in ("id", "user_id", "created_at", "_id")}
+        await db.transactions.update_one({"id": document["id"], "user_id": user["id"]}, {"$set": changes})
+    return {"ok": True, "updated": len(prepared), "ids": ids}
 
 
 @api.patch("/payouts/{tx_id}/reference", response_model=TransactionOut)

@@ -13,6 +13,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
 import { Plus, Trash2, Pencil, Store as StoreIcon } from "lucide-react";
+import { BulkEditDialog } from "@/components/BulkEditDialog";
 import { toast } from "sonner";
 
 const CURRENCIES = ["USD", "CAD", "MXN", "GBP", "EUR", "AUD", "JPY", "AED", "SAR", "TRY", "SEK", "PLN"];
@@ -21,6 +22,7 @@ export default function Stores() {
   const { stores, refresh, setActiveStoreId } = useStore();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [bulkEditing, setBulkEditing] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [form, setForm] = useState({ name: "", marketplaces: ["US"], default_currency: "USD" });
 
@@ -147,7 +149,7 @@ export default function Stores() {
         </Dialog>
       </div>
 
-      {selectedIds.size > 0 && <div className="flex justify-end"><Button variant="destructive" onClick={removeSelected} data-testid="bulk-delete-stores">Seçilen mağazaları sil ({selectedIds.size})</Button></div>}
+      {selectedIds.size > 0 && <div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setBulkEditing(true)} data-testid="bulk-edit-stores">Seçilenleri Düzenle</Button><Button variant="destructive" onClick={removeSelected} data-testid="bulk-delete-stores">Seçilen mağazaları sil ({selectedIds.size})</Button></div>}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {stores.length === 0 && (
           <div className="col-span-full bg-white border border-dashed border-slate-300 rounded-2xl p-10 text-center">
@@ -186,6 +188,7 @@ export default function Stores() {
           </div>
         ))}
       </div>
+      {bulkEditing && <BulkEditDialog title="Mağazaları Toplu Düzenle" description="Yalnızca doldurulan alanlar uygulanır" endpoint="/stores/bulk-update" ids={[...selectedIds]} fields={[{ key: "name", label: "Mağaza Adı" }, { key: "default_currency", label: "Varsayılan Para Birimi", type: "select", options: CURRENCIES.map(value => ({ value, label: value })) }]} onClose={() => setBulkEditing(false)} onSaved={() => { setBulkEditing(false); setSelectedIds(new Set()); refresh(); }} />}
     </div>
   );
 }
