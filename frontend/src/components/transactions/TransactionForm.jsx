@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useStore } from "@/contexts/StoreContext";
 import { useFormMarketplace } from "@/hooks/useFormMarketplace";
-import { MP_BY_CODE, TRANSACTION_CATEGORIES, COST_FIELDS, RECOVERY_FIELDS } from "@/constants/marketplaces";
+import { useCategories } from "@/hooks/useCategories";
+import { MP_BY_CODE, COST_FIELDS, RECOVERY_FIELDS } from "@/constants/marketplaces";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +17,8 @@ import { FxStatus, formatUsd } from "@/components/FxStatus";
 const blank = () => ({ date: new Date().toISOString().slice(0, 10), category: "Order payments", amount: "", order_id: "", description: "", product_cost: "", shipping_cost: "", extra_cost: "", product_cost_recovery: "", shipping_cost_recovery: "" });
 export const TransactionForm = ({ onSaved }) => {
   const { activeStore, activeStoreId, activeMarketplace } = useStore();
+  const { bySection } = useCategories(activeStoreId);
+  const generalCategories = bySection("general");
   const [form, setForm] = useState(blank);
   const { marketplace, currency, selectMarketplace } = useFormMarketplace();
   const [saving, setSaving] = useState(false);
@@ -25,7 +28,8 @@ export const TransactionForm = ({ onSaved }) => {
   useEffect(() => {
     setForm(blank()); setError("");
   }, [activeStoreId, activeMarketplace]);
-  const isIncome = form.category === "Order payments";
+  const activeCat = useMemo(() => generalCategories.find((c) => c.name === form.category), [generalCategories, form.category]);
+  const isIncome = activeCat ? activeCat.type === "income" : form.category === "Order payments";
   const isRefund = form.category === "Refunds";
   const costs = COST_FIELDS.reduce((total, { key }) => total + (Number(form[key]) || 0), 0);
   const recovered = RECOVERY_FIELDS.reduce((total, { key }) => total + (Number(form[key]) || 0), 0);
@@ -34,12 +38,12 @@ export const TransactionForm = ({ onSaved }) => {
     e.preventDefault(); setError("");
     if (!activeStoreId || !activeStore?.marketplaces?.includes(marketplace)) { setError("Geçerli bir mağaza ve pazar yeri seçin."); return; }
     if (!fx.quote) { setError("Kayıt için otomatik kurun alınması gerekiyor."); return; }
-    if (!form.date || !TRANSACTION_CATEGORIES.includes(form.category) || !Number.isFinite(Number(form.amount)) || Number(form.amount) <= 0) { setError("Tarih, işlem türü ve sıfırdan büyük bir tutar girin."); return; }
+    if (!form.date || !form.category || !Number.isFinite(Number(form.amount)) || Number(form.amount) <= 0) { setError("Tarih, işlem türü ve sıfırdan büyük bir tutar girin."); return; }
     if (isIncome && COST_FIELDS.some(({ key }) => !Number.isFinite(Number(form[key])) || Number(form[key]) < 0)) { setError("Maliyetler sıfır veya pozitif olmalıdır."); return; }
     if (isRefund && RECOVERY_FIELDS.some(({ key }) => !Number.isFinite(Number(form[key])) || Number(form[key]) < 0)) { setError("Geri alınan tutarlar sıfır veya pozitif olmalıdır."); return; }
     setSaving(true);
     try {
-      await api.post("/transactions", { ...form, store_id: activeStoreId, marketplace, currency, type: isIncome ? "income" : "expense", amount: Number(form.amount),
+      await api.post("/transactions", { ...form, store_id: activeStoreId, marketplace, currency, type: isIncome ? "income" : "expense", section: "general", amount: Number(form.amount),
         ...Object.fromEntries(COST_FIELDS.map(({ key }) => [key, isIncome ? Number(form[key]) : 0])),
         ...Object.fromEntries(RECOVERY_FIELDS.map(({ key }) => [key, isRefund ? Number(form[key]) : 0])), order_id: form.order_id.trim() });
       toast.success("İşlem kaydedildi"); setForm(f => ({ ...blank(), category: f.category, date: f.date })); onSaved();
@@ -53,9 +57,9 @@ export const TransactionForm = ({ onSaved }) => {
         <SelectTrigger id="tx-marketplace" data-testid="tx-marketplace-select" className="mt-2"><SelectValue placeholder="Pazar seçin" /></SelectTrigger>
         <SelectContent data-testid="tx-marketplace-options">{(activeStore?.marketplaces || []).map(c => <SelectItem key={c} value={c} data-testid={`tx-marketplace-${c.toLowerCase()}`}>{MP_BY_CODE[c]?.flag} {MP_BY_CODE[c]?.name}</SelectItem>)}</SelectContent>
       </Select></div>
-      <div><Label htmlFor="tx-category">İşlem Türü</Label><Select value={form.category} onValueChange={v => { if (TRANSACTION_CATEGORIES.includes(v)) change("category", v); }}>
+      <div><Label htmlFor="tx-category">İşlem Türü</Label><Select value={form.category} onValueChange={v => change("category", v)}>
         <SelectTrigger id="tx-category" data-testid="tx-category-select" className="mt-2"><SelectValue /></SelectTrigger>
-        <SelectContent data-testid="tx-category-options">{TRANSACTION_CATEGORIES.map((c, i) => <SelectItem key={c} value={c} data-testid={`tx-category-${i}`}>{c}</SelectItem>)}</SelectContent>
+        <SelectContent data-testid="tx-category-options">{generalCategories.map((c, i) => <SelectItem key={c.id} value={c.name} data-testid={`tx-category-${i}`}>{c.name} ({c.type === "income" ? "Gelir" : "Gider"})</SelectItem>)}</SelectContent>
       </Select></div>
       <div><Label htmlFor="tx-amount" data-testid="tx-amount-label">{isIncome ? "Gelir" : isRefund ? "Müşteriye İade" : "Gider"} Tutarı ({currency || "—"})</Label><div className="relative mt-2">{!isIncome && <span className="absolute left-3 top-2 text-rose-600 font-semibold" aria-hidden="true">−</span>}<Input id="tx-amount" type="number" step="0.01" min="0.01" value={form.amount} onChange={e => change("amount", e.target.value)} data-testid="tx-amount-input" className={`font-mono-num ${!isIncome ? "pl-7 text-rose-600" : ""}`} placeholder="0.00" /></div><p className="text-xs text-slate-500 mt-2" data-testid="tx-amount-usd">USD karşılığı: {formatUsd(amountUsd)}</p></div>
       <div><Label htmlFor="tx-order">Order ID</Label><Input id="tx-order" value={form.order_id} onChange={e => change("order_id", e.target.value)} data-testid="tx-order-input" className="mt-2" /></div>

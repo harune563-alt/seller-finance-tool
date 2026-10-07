@@ -9,16 +9,19 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   LayoutDashboard, Receipt, Wallet, FileBarChart2, Store as StoreIcon,
-  LogOut, ChevronDown, Globe, Landmark,
+  LogOut, ChevronDown, Globe, Landmark, Package, Megaphone, Settings,
 } from "lucide-react";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
   { to: "/transactions", label: "Gelir / Gider", icon: Receipt, testId: "nav-transactions" },
+  { to: "/fba", label: "FBA Takibi", icon: Package, testId: "nav-fba" },
+  { to: "/ppc", label: "PPC Reklam", icon: Megaphone, testId: "nav-ppc" },
   { to: "/payouts", label: "Amazon Ödemeleri", icon: Wallet, testId: "nav-payouts" },
   { to: "/company", label: "Sermaye & Kasa", icon: Landmark, testId: "nav-company" },
   { to: "/report", label: "Kar-Zarar Raporu", icon: FileBarChart2, testId: "nav-report" },
   { to: "/stores", label: "Mağazalar", icon: StoreIcon, testId: "nav-stores" },
+  { to: "/settings/categories", label: "Ayarlar", icon: Settings, testId: "nav-settings" },
 ];
 
 export default function Layout() {

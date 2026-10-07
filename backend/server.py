@@ -29,6 +29,7 @@ from usd_ledger import attach_usd, enrich_records, summary_usd, FIELDS as USD_CO
 from ledger_search import search_history
 from company.routes import company_router
 from company.common import initialize_indexes as initialize_company_indexes
+from categories import category_router, initialize_category_indexes, resolve_category, ensure_seeded, DEFAULT_CATEGORIES
 from reporting import report_router
 
 # ---------------------------------------------------------------------------
@@ -158,11 +159,27 @@ class TransactionIn(CostsIn):
     description: Optional[str] = ""
     order_id: Optional[str] = ""
     payment_reference: str = Field(default="", max_length=200)
+    # Section flags the record as general / FBA / PPC for new reporting lanes.
+    section: Literal["general", "fba", "ppc"] = "general"
+    # PPC-specific optional metrics (filled only for PPC campaigns).
+    campaign_name: Optional[str] = Field(default="", max_length=200)
+    ad_type: Optional[str] = Field(default="", max_length=80)
+    asin_sku: Optional[str] = Field(default="", max_length=120)
+    clicks: int = Field(default=0, ge=0, le=1000000000)
+    impressions: int = Field(default=0, ge=0, le=1000000000000)
+    orders_count: int = Field(default=0, ge=0, le=1000000000)
 
     @field_validator("payment_reference", mode="before")
     @classmethod
     def normalize_payment_reference(cls, value):
         return value.strip() if isinstance(value, str) else value or ""
+
+    @field_validator("campaign_name", "ad_type", "asin_sku", "description", "order_id", mode="before")
+    @classmethod
+    def strip_optional_text(cls, value):
+        if value is None:
+            return ""
+        return value.strip() if isinstance(value, str) else value
 
     @field_validator("date")
     @classmethod
@@ -410,14 +427,29 @@ async def validate_transaction(data: TransactionIn, user):
     if data.type == "payout":
         if data.category not in ("Oluşturuldu", "İşleniyor", "Bankada"):
             raise HTTPException(400, "Geçersiz ödeme durumu")
-    elif CATEGORIES.get(data.category) != data.type:
-        raise HTTPException(400, "Order payments gelir; Refunds ve Service Fees gider olarak kaydedilir")
+    else:
+        # Accept both legacy hardcoded categories and user-defined ones from the DB.
+        legacy_type = CATEGORIES.get(data.category)
+        if legacy_type and legacy_type != data.type:
+            raise HTTPException(400, "Order payments gelir; Refunds ve Service Fees gider olarak kaydedilir")
+        if not legacy_type:
+            await ensure_seeded(db, user["id"], data.store_id)
+            custom = await resolve_category(db, user["id"], data.store_id, data.category)
+            if not custom:
+                raise HTTPException(400, "Bilinmeyen işlem türü; önce Ayarlar'dan ekleyin")
+            if custom["type"] != data.type:
+                raise HTTPException(400, "İşlem türü kategorinin türü (gelir/gider) ile uyuşmuyor")
+            if custom.get("archived"):
+                raise HTTPException(400, "Arşivlenmiş kategoriye yeni kayıt eklenemez")
     if data.type != "income" and any(getattr(data, key) for key in COST_FIELDS):
         raise HTTPException(400, "Maliyetler yalnızca gelir kaydına eklenebilir")
     if data.type != "payout" and data.payment_reference:
         raise HTTPException(400, "Ödeme referansı yalnızca Amazon ödemelerine eklenebilir")
     if data.category != "Refunds" and any(getattr(data, key) for key in RECOVERY_FIELDS):
         raise HTTPException(400, "Geri kazanımlar yalnızca Refunds kaydına eklenebilir")
+    # PPC-specific metrics only allowed when section=ppc
+    if data.section != "ppc" and (data.clicks or data.impressions or data.orders_count or data.campaign_name or data.ad_type):
+        raise HTTPException(400, "Kampanya alanları yalnızca PPC bölümünde kullanılabilir")
 
 
 @api.post("/transactions", response_model=TransactionOut)
@@ -443,6 +475,7 @@ async def list_transactions(
     marketplace: Optional[str] = None,
     type: Optional[str] = None,
     currency: Optional[str] = None,
+    section: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     limit: int = Query(500, ge=1, le=10000),
@@ -453,6 +486,12 @@ async def list_transactions(
     if type: q["type"] = type
     else: q["type"] = {"$in": ["income", "expense", "payout"]}
     if currency and currency != "ALL": q["currency"] = currency
+    if section and section != "ALL":
+        if section == "general":
+            # Records written before the section field default to general.
+            q["$or"] = [{"section": "general"}, {"section": {"$exists": False}}]
+        else:
+            q["section"] = section
     if start_date or end_date:
         q["date"] = {}
         if start_date: q["date"]["$gte"] = start_date
@@ -668,6 +707,7 @@ async def import_csv(
 # App setup
 # ---------------------------------------------------------------------------
 api.include_router(company_router(db, get_current_user))
+api.include_router(category_router(db, get_current_user))
 api.include_router(report_router(db, get_current_user))
 app.include_router(api)
 
@@ -690,6 +730,7 @@ app.add_middleware(OriginAliasMiddleware, aliases=CORS_ORIGIN_ALIASES)
 @app.on_event("startup")
 async def startup():
     await initialize_company_indexes(db)
+    await initialize_category_indexes(db)
     await db.users.create_index("email", unique=True)
     await db.fx_rates.create_index([("source", 1), ("base", 1), ("quote", 1), ("requested_date", 1)], unique=True)
     await db.login_attempts.create_index("identifier", unique=True)

@@ -17,6 +17,8 @@ import CompanyOverview from "@/pages/company/Overview";
 import Capital from "@/pages/company/Capital";
 import Debts from "@/pages/company/Debts";
 import Closings from "@/pages/company/Closings";
+import SectionLedger from "@/pages/SectionLedger";
+import CategorySettings from "@/pages/CategorySettings";
 
 function App() {
   return (
@@ -29,9 +31,12 @@ function App() {
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/transactions" element={<Transactions />} />
+              <Route path="/fba" element={<SectionLedger section="fba" title="FBA Takibi" subtitle="FBA gelir ve giderleri" />} />
+              <Route path="/ppc" element={<SectionLedger section="ppc" title="PPC Reklam Takibi" subtitle="Kampanya başına tıklama / gösterim / sipariş" />} />
               <Route path="/payouts" element={<Payouts />} />
               <Route path="/report" element={<Report />} />
               <Route path="/stores" element={<Stores />} />
+              <Route path="/settings/categories" element={<CategorySettings />} />
               <Route path="/company" element={<CompanyLayout />}>
                 <Route index element={<CompanyOverview />} />
                 <Route path="capital" element={<Capital />} />
