@@ -212,3 +212,11 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
   `/root/.emergent/automation_output/20261005_181730/console_20261005_181730.log`.
 - TEST_FILTER_* test verileri temizlendi, mevcut kullanıcı kayıtlarına dokunulmadı. Oluşturulan regresyon test hesabı
   test_credentials.md dosyasında kayıtlı. Bu çalışma ek entegrasyon veya MOCK API içermez.
+
+## Son tamamlanan çalışma — Cari hesap ekstresi ve kasa etkisi (2026-10-07)
+- Yeni `company_current_entries` koleksiyonu: cari kişi, borç/alacak yönü, tutar, tarih, mağaza, açıklama, kasa etkisi (`none/in/out`) ve gerçekleşme durumu (`pending/completed`).
+- Yeni API: `GET/POST/PUT/DELETE /api/company/current-accounts` ve toplu silme; kişi/para birimi/mağaza filtresi, idempotent request_id ve cari bazında toplam borç/alacak/net bakiye.
+- Cari ekstre hareketlerinde tarih sıralı `balance_after` gösterimi; tamamlanmış kasa giriş/çıkışları Company Overview ledger ve kasa bakiyesine tek kaynaktan yansıyor.
+- `Sermaye & Kasa → Borç & Alacak` varsayılan ekranı Cari Hesap Ekstresi oldu. Mevcut `company_debts` sistemi ve kayıtları silinmeden `Eski Borç/Alacak Kayıtları` sekmesinde korunuyor.
+- Cari hareketli kişiler silinmeye karşı korunuyor. Yeni formda `Kasa etkisi yok / Kasaya giriş / Kasadan çıkış` ve `Bekliyor / Gerçekleşti` seçimleri bulunuyor.
+- Backend: iteration_9 ile 21/21 test geçti; mevcut şirket finansı regresyonları 13/13 geçti. Frontend: cari oluşturma, kasa etkisi, filtre, düzenleme/silme, legacy sekmesi ve 390/768/1440 responsive kontrolleri geçti.
