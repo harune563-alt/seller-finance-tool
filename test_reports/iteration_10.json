@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 10 end-to-end review for Cari Hesap Ekstresi: due_date / due_status, bulk-complete + bulk-delete, XLSX/PDF reports and the new 'Cari Kasa Mutabakatı' section on /company. Added a new backend regression test file (14 tests) in /app/backend/tests/test_current_accounts_due_and_reports.py covering: due_date >= date (422), due_status values (none/upcoming/due_soon within 7-day window/overdue/completed override), bulk-complete flipping pending to completed with cash ledger entries appearing exactly once in /api/company/overview and idempotency on 2nd call, bulk-delete removing entries + reversing cash ledger (404 when no match), Excel XLSX (PK header, 200) and PDF (%PDF header, 200) with Turkish notes, 422 for invalid date ranges on both report endpoints, and overview reconciliation (pending excluded, completed exactly once). All 14 new tests pass. Pre-existing /app/backend/tests/test_current_accounts_regression.py (8 tests) continues to pass when run sequentially — note: those 8 tests assume no concurrent writes, so running the two files together via xdist's loadscope causes benign cash-balance drift (not a product bug). Frontend Playwright E2E on /company/debts: all required data-testids (current-due-date, current-due-filter, current-report-excel/pdf, current-select-all, current-entry-form, current-cash-effect, current-cash-status, current-bulk-complete/delete) present; created a person, added one pending entry with due_date=today+2d and one completed cash-out entry; 'Vadesi yaklaşan' due_soon badge rendered; due filter narrowed the table to the one due_soon row; select-all + bulk-complete flipped both rows to 'Gerçekleşti'; Excel ve PDF indir butonları blob indirmelerini (cari-ekstre.xlsx / cari-ekstre.pdf) hatasız tetikledi; select-all + bulk-delete cleared the table (0 rows). On /company the 'Cari Kasa Mutabakatı' section plus currency/start/end filters all mount. No horizontal overflow at 390 / 768 / 1440 widths for either /company/debts or /company. No console errors except pre-login 401 (expected). Cleaned the single TEST_PLAN_ person and all current entries from the admin account via Mongo after the run.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_current_accounts_due_and_reports.py",
+    "/app/backend/tests/test_current_accounts_regression.py",
+    "/app/test_reports/pytest/iter10_current_accounts.xml",
+    "/app/test_reports/pytest/iter10_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "complete_current_entries raises 404 if no pending rows matched, which also fires on an idempotent second bulk-complete call. The UI toast will show an error even though the end state is already correct. Consider returning {ok:true, updated:0} on no-op to make the endpoint idempotent on repeat clicks.",
+    "due_status() uses a 7-day window for 'due_soon' (today+7d). The spec/review request mentions 'due in 3 days is due_soon' — current implementation returns due_soon for anything within 7 days which still satisfies that example but may surface more entries than expected. Confirm with product.",
+    "routes.py registers /current-accounts/report/excel and /pdf BEFORE /current-accounts/{entry_id} which is correct, but there is no explicit test asserting that /current-accounts/report is NOT treated as an entry_id. The regression file covers it implicitly (200 vs 422). Good as-is but worth noting if someone reorders.",
+    "current_accounts_pdf relies on /usr/share/fonts/truetype/freefont/FreeSans.ttf at runtime. Preview container currently has it, but there is no startup guard; a missing font would 500 on first PDF request. Consider a lazy-register with graceful fallback or add the font to requirements/apt deps."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_current_accounts_due_and_reports.py"
+  ],
+  "success_rate": {"backend": "100% (14/14 new + 8/8 existing sequentially)", "frontend": "100% (all required flows verified)"},
+  "test_credentials": "admin@amzsuite.com / admin123 (UI); company-test-76940be4f3@example.com / T3st!Comp@ny2026#A (pytest)",
+  "seed_data_creation": "No persistent seed data left. New pytest fixture (session-scoped autouse) wipes company_current_entries for the test user and TEST_CARI_ people. UI test person (TEST_PLAN_*) removed via Mongo cleanup after the run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The two current-accounts pytest files should NOT be run together under xdist parallelism because both measure deltas on the single admin cash balance; use '-o addopts=\"\"' or restrict to one file at a time. All UI data-testids follow the convention from company/Fields.jsx: TextField/SelectField both expose data-testid={id} on the input/trigger plus `${id}-option-${value}` on each select option. Person dialog uses testid 'person-name' and 'person-save' (not 'person-name-input'). Auth token lives in localStorage key 'amz_token'.",
+  "rca of the issue": "N/A — no bugs found."
+}

@@ -160,8 +160,8 @@ async def complete_current_entries(db, user_id, entry_ids):
         {"id": {"$in": ids}, "user_id": user_id, "cash_status": "pending"},
         {"$set": {"cash_status": "completed"}},
     )
-    if result.matched_count == 0:
-        raise HTTPException(404, "Bekleyen cari hareket bulunamadı")
+    if result.matched_count == 0 and await db.company_current_entries.count_documents({"id": {"$in": ids}, "user_id": user_id}) == 0:
+        raise HTTPException(404, "Cari hareket bulunamadı")
     return {"ok": True, "updated": result.modified_count, "ids": ids}
 
 

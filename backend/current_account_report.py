@@ -1,4 +1,5 @@
 from io import BytesIO
+import os
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -62,11 +63,16 @@ def build_current_workbook(report, person_name, currency, start_date, end_date):
 
 def _register_font():
     path = "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+    if not os.path.exists(path):
+        return "Helvetica"
     try:
-        pdfmetrics.getFont("DejaVuSans")
+        pdfmetrics.getFont("FreeSans")
     except KeyError:
-        pdfmetrics.registerFont(TTFont("DejaVuSans", path))
-    return "DejaVuSans"
+        try:
+            pdfmetrics.registerFont(TTFont("FreeSans", path))
+        except Exception:
+            return "Helvetica"
+    return "FreeSans"
 
 
 def build_current_pdf(report, person_name, currency, start_date, end_date):

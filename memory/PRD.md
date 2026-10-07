@@ -220,3 +220,12 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - `Sermaye & Kasa → Borç & Alacak` varsayılan ekranı Cari Hesap Ekstresi oldu. Mevcut `company_debts` sistemi ve kayıtları silinmeden `Eski Borç/Alacak Kayıtları` sekmesinde korunuyor.
 - Cari hareketli kişiler silinmeye karşı korunuyor. Yeni formda `Kasa etkisi yok / Kasaya giriş / Kasadan çıkış` ve `Bekliyor / Gerçekleşti` seçimleri bulunuyor.
 - Backend: iteration_9 ile 21/21 test geçti; mevcut şirket finansı regresyonları 13/13 geçti. Frontend: cari oluşturma, kasa etkisi, filtre, düzenleme/silme, legacy sekmesi ve 390/768/1440 responsive kontrolleri geçti.
+
+
+## Son tamamlanan çalışma — Cari vade, toplu işlemler, mutabakat ve raporlar (2026-10-07)
+- Cari hareketlere `due_date` ve uygulama içi `due_status` eklendi: vadesi olan, vadesi yaklaşan (7 gün), vadesi geçen ve gerçekleşen rozetleri/filtreleri.
+- `/api/company/current-accounts/bulk-complete` ve mevcut bulk-delete ile seçili hareketleri topluca gerçekleşti yapma veya silme; tekrar gerçekleşti çağrısı idempotent.
+- Kasa ekranında Cari Kasa Mutabakatı bölümü: gerçekleşmiş cari giriş/çıkışları ayrı listeler, tarih/para birimi filtreleri ve döviz bazında giriş-çıkış-net dönem toplamları.
+- Cari rapor endpointleri: `/api/company/current-accounts/report/excel` ve `/pdf`; kişi, para birimi ve tarih aralığı filtreli XLSX/PDF çıktıları. PDF fontu için güvenli fallback eklendi.
+- Frontend Cari Ekstre: vade alanı, vade filtresi, toplu seçim, toplu gerçekleşti/sil, Excel/PDF indirme ve rapor filtreleri.
+- Doğrulama: iteration_10 ile 14/14 yeni test + 8/8 cari regresyon geçti; son idempotency/fallback düzeltmesi sonrası 14/14 test tekrar geçti. Frontend tüm akışlar ve 390/768/1440 responsive kontrolleri geçti.
