@@ -177,6 +177,24 @@
 ##         -comment: "Tüm kayıt listelerine seçilen kayıtları önizleme ve onay sonrası toplu güncelleme kontrolleri bağlandı. Frontend doğrulaması bekleniyor."
 ##   - task: "Preview login authentication flow"
 ##     implemented: true
+##   - task: "TRY/USD historical FX quote for 2026-10-07"
+##     implemented: true
+##     working: true
+##     file: "backend/fx_service.py, backend/.env"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: false
+##     status_history:
+##         -working: NA
+##     -agent: "testing"
+##     -message: "Frontend/browser verification passed. The configured base needed the `/v2` suffix; after setting FRANKFURTER_BASE_URL=https://api.frankfurter.dev/v2 and restarting backend, TRY/USD 2026-10-07 returned 200 with rate 0.02034, UI displayed the quote, submit enabled, USD regression passed, and Mongo cache was populated."
+
+##         -agent: "main"
+##         -comment: "TRY/USD request returned 422 because FRANKFURTER_BASE_URL and FX_TIMEOUT_SECONDS were missing from backend environment. User added the settings; backend restarted successfully."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "FX BUG VERIFIED FIXED. Root cause: FRANKFURTER_BASE_URL was set to 'https://api.frankfurter.dev' but Frankfurter API v2 requires '/v2' prefix. Changed to 'https://api.frankfurter.dev/v2'. Testing confirmed: (1) GET /api/fx/to-usd?currency=TRY&date=2026-10-07 returns 200 OK ✅ (2) Response body contains valid TRY/USD rate: 0.02034 ✅ (3) UI displays '1 TRY = 0.020340 USD · Kur tarihi: 2026-10-07 · Frankfurter' ✅ (4) No error message 'TRY/USD kuru 2026-10-07 için alınamadı' ✅ (5) Form submit button enabled ✅ (6) USD regression test passed ✅. Backend logs show Frankfurter API now returns 200 OK instead of 404. FX quote successfully cached in database."
+
 ##     working: true
 ##     file: "frontend/src/pages/Login.jsx, frontend/src/contexts/AuthContext.js"
 ##     stuck_count: 0
@@ -194,7 +212,7 @@
 ##   run_ui: false
 ## test_plan:
 ##   current_focus:
-##     - "Preview login authentication verified - all flows working correctly"
+##     - "TRY/USD FX bug verified fixed - Frankfurter API v2 endpoint configured correctly"
 ##   stuck_tasks: []
 ##   test_all: false
 ##   test_priority: "high_first"
@@ -219,6 +237,8 @@
 ##     -message: "FOCUSED REGRESSION RETEST COMPLETED: Verified POST /api/company/closings/run endpoint after route decorator restoration. Test Results: (1) POST /api/company/closings/run properly registered, accepts authenticated requests, returns 202, queues jobs successfully ✅ (2) All GET company endpoints return 200: people, capital, debts, overview, closings, jobs ✅ (3) POST /api/company/closings/bulk-update and all bulk-update endpoints available and functional ✅ (4) Company regression suite: 13/13 PASSED (100%) including both manual closing tests ✅ (5) Bulk update suite: 22/26 PASSED (84.6%), 4 failures are test bugs not API issues ✅. Created verification test: /app/closing_route_verification_test.py. Route decorator restoration successful - all required functionality verified. Ready for main agent to summarize and finish."
 ##     -agent: "testing"
 ##     -message: "PREVIEW LOGIN VERIFICATION COMPLETED: Comprehensive end-to-end browser testing with Playwright using test@test.com / 123456. ALL authentication flows working perfectly (10/10 tests passed). Login, session persistence, reload, logout, and protected route redirection all verified. CRITICAL: NO CORS issues detected - the previously reported OPTIONS /api/auth/login 400 error is NOT present. REACT_APP_BACKEND_URL correctly resolved. HttpOnly cookies working as expected. The reported preview login issue does NOT exist - authentication is fully functional."
+##     -agent: "testing"
+##     -message: "TRY/USD FX BUG VERIFIED FIXED. Root cause identified: FRANKFURTER_BASE_URL was incorrectly set to 'https://api.frankfurter.dev' (missing /v2 prefix). Frankfurter API v2 requires 'https://api.frankfurter.dev/v2' base URL. Fixed backend/.env and restarted backend. End-to-end browser testing confirmed: TRY/USD quote for 2026-10-07 now loads successfully with rate 0.02034, no error message displayed, form not blocked, API returns 200 OK. Backend logs show Frankfurter API now returns 200 OK instead of 404. USD regression test passed. Bug is RESOLVED."
 
 
 #====================================================================================================
