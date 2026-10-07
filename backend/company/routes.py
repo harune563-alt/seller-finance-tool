@@ -1,8 +1,10 @@
 import os
+import asyncio
 import secrets
 import uuid
+from datetime import date
 from typing import Literal, Optional
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Query, Response
 from pydantic import BaseModel, ValidationError
 from pymongo.errors import DuplicateKeyError
 from company.models import (PersonIn, PersonOut, CapitalIn, CapitalUpdateIn, CapitalOut, DebtIn, DebtUpdateIn, DebtOut,
@@ -12,7 +14,8 @@ from company.models import (PersonIn, PersonOut, CapitalIn, CapitalUpdateIn, Cap
 from company.common import cash, cents, names, now, owned
 from company.capital import post_capital, capital_summary, update_capital_entry, delete_capital_entry
 from company.treasury import create_debt, settle_debt, update_debt, update_debt_payment, delete_debt_payment, debt_output, company_overview
-from company.current_accounts import create_current_entry, current_account_summary, update_current_entry, delete_current_entry
+from company.current_accounts import create_current_entry, current_account_summary, update_current_entry, delete_current_entry, complete_current_entries, current_report_data
+from current_account_report import build_current_workbook, build_current_pdf
 from company.closings import queue_close
 
 class CronEnvelope(BaseModel):
@@ -166,6 +169,29 @@ def company_router(db, get_user):
     @router.get("/current-accounts", response_model=CurrentAccountOut)
     async def current_accounts(person_id: Optional[str] = None, currency: Optional[Literal["USD", "TRY"]] = None, store_id: Optional[str] = None, user=Depends(get_user)):
         return CurrentAccountOut(**await current_account_summary(db, user["id"], person_id, currency, store_id))
+
+    @router.post("/current-accounts/bulk-complete")
+    async def bulk_complete_current_account_entries(data: BulkIdsIn, user=Depends(get_user)):
+        return await complete_current_entries(db, user["id"], data.ids)
+
+    @router.get("/current-accounts/report/excel")
+    async def current_accounts_excel(person_id: Optional[str] = None, currency: Optional[Literal["USD", "TRY"]] = None, start_date: Optional[date] = None, end_date: Optional[date] = None, user=Depends(get_user)):
+        if start_date and end_date and start_date > end_date:
+            raise HTTPException(422, "Başlangıç tarihi bitişten sonra olamaz")
+        report = await current_report_data(db, user["id"], person_id, currency, start_date.isoformat() if start_date else None, end_date.isoformat() if end_date else None)
+        person_name = report["people"].get(person_id, {}).get("name", "") if person_id else ""
+        content = await asyncio.to_thread(build_current_workbook, report, person_name, currency, start_date.isoformat() if start_date else "", end_date.isoformat() if end_date else "")
+        return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": 'attachment; filename="cari-ekstre.xlsx"'})
+
+    @router.get("/current-accounts/report/pdf")
+    async def current_accounts_pdf(person_id: Optional[str] = None, currency: Optional[Literal["USD", "TRY"]] = None, start_date: Optional[date] = None, end_date: Optional[date] = None, user=Depends(get_user)):
+        if start_date and end_date and start_date > end_date:
+            raise HTTPException(422, "Başlangıç tarihi bitişten sonra olamaz")
+        report = await current_report_data(db, user["id"], person_id, currency, start_date.isoformat() if start_date else None, end_date.isoformat() if end_date else None)
+        person_name = report["people"].get(person_id, {}).get("name", "") if person_id else ""
+        content = await asyncio.to_thread(build_current_pdf, report, person_name, currency, start_date.isoformat() if start_date else "", end_date.isoformat() if end_date else "")
+        return Response(content, media_type="application/pdf", headers={"Content-Disposition": 'attachment; filename="cari-ekstre.pdf"'})
+
 
     @router.post("/current-accounts", response_model=CurrentEntryOut)
     async def add_current_account_entry(data: CurrentEntryIn, user=Depends(get_user)):

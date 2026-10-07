@@ -177,8 +177,17 @@ class CurrentEntryIn(AmountIn):
     store_id: Optional[str] = None
     direction: Literal["payable", "receivable"]
     currency: Currency
+    due_date: Optional[str] = None
     cash_effect: CashEffect = "none"
     cash_status: CashStatus = "pending"
+
+    @model_validator(mode="after")
+    def valid_due_date(self):
+        if self.due_date:
+            self.due_date = calendar_date.fromisoformat(self.due_date).isoformat()
+            if self.due_date < self.date:
+                raise ValueError("Vade işlem tarihinden önce olamaz")
+        return self
 
 class CurrentEntryOut(BaseModel):
     id: str
@@ -190,9 +199,11 @@ class CurrentEntryOut(BaseModel):
     currency: str
     amount: float
     date: str
+    due_date: Optional[str] = None
     note: str
     cash_effect: str
     cash_status: str
+    due_status: str
     balance_after: float
     created_at: str
 

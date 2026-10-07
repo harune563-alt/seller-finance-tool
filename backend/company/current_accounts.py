@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
 
@@ -17,12 +17,27 @@ def _balance_signed(entry):
     return amount if entry["direction"] == "payable" else -amount
 
 
+def due_status(entry):
+    if entry.get("cash_status") == "completed":
+        return "completed"
+    if not entry.get("due_date"):
+        return "none"
+    today = datetime.now(timezone.utc).date()
+    due = datetime.fromisoformat(entry["due_date"]).date()
+    if due < today:
+        return "overdue"
+    if due <= today + timedelta(days=7):
+        return "due_soon"
+    return "upcoming"
+
+
 def current_entry_output(doc, people, stores, balance_after=None):
     return {
         **doc,
         "person_name": people.get(doc["person_id"], {}).get("name", "—"),
         "store_name": stores.get(doc.get("store_id"), {}).get("name"),
         "amount": cash(doc["amount_cents"]),
+        "due_status": due_status(doc),
         "balance_after": cash(balance_after) if balance_after is not None else 0,
     }
 
@@ -56,7 +71,7 @@ async def create_current_entry(db, user_id, data):
         await db.company_current_entries.insert_one(dict(doc))
     except DuplicateKeyError:
         previous = await owned(db, "company_current_entries", doc["id"], user_id)
-        compare = ("person_id", "store_id", "direction", "currency", "amount_cents", "date", "cash_effect", "cash_status", "note")
+        compare = ("person_id", "store_id", "direction", "currency", "amount_cents", "date", "due_date", "cash_effect", "cash_status", "note")
         if any(previous.get(key) != doc.get(key) for key in compare):
             raise HTTPException(409, "Aynı işlem anahtarı farklı bir cari hareket için kullanılamaz")
         doc = previous
@@ -137,6 +152,38 @@ async def delete_current_entry(db, user_id, entry_id):
     if result.deleted_count == 0:
         raise HTTPException(404, "Cari hareket bulunamadı")
     return {"ok": True}
+
+
+async def complete_current_entries(db, user_id, entry_ids):
+    ids = list(dict.fromkeys(entry_ids))
+    result = await db.company_current_entries.update_many(
+        {"id": {"$in": ids}, "user_id": user_id, "cash_status": "pending"},
+        {"$set": {"cash_status": "completed"}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Bekleyen cari hareket bulunamadı")
+    return {"ok": True, "updated": result.modified_count, "ids": ids}
+
+
+async def current_report_data(db, user_id, person_id=None, currency=None, start_date=None, end_date=None):
+    query = {"user_id": user_id}
+    if person_id:
+        query["person_id"] = person_id
+    if currency:
+        query["currency"] = currency
+    docs = await db.company_current_entries.find(query, {"_id": 0}).to_list(None)
+    people, stores = await names(db, user_id)
+    pairs = _with_balances(docs)
+    filtered = [(entry, balance) for entry, balance in pairs if (not start_date or entry["date"] >= start_date) and (not end_date or entry["date"] <= end_date)]
+    rows = [current_entry_output(entry, people, stores, balance) for entry, balance in filtered]
+    totals = {"total_payable": 0, "total_receivable": 0, "net_balance": 0}
+    for entry, _ in filtered:
+        amount = entry["amount_cents"]
+        totals["total_payable"] += amount if entry["direction"] == "payable" else 0
+        totals["total_receivable"] += amount if entry["direction"] == "receivable" else 0
+        totals["net_balance"] += _balance_signed(entry)
+    rows.sort(key=lambda item: (item["date"], item.get("created_at", "")))
+    return {"rows": rows, "totals": {key: cash(value) for key, value in totals.items()}, "people": people}
 
 
 def current_cash_ledger(entry, people, stores):
