@@ -120,6 +120,16 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - Geçmiş kategoriler/kayıtlar silinmez, eksik maliyet alanları sıfırdır.
 
 ## Durum ve öncelikler
+### P0 — FBA/PPC takibi + özel kategoriler (2026-10-07, tamamlandı)
+- Yeni `transaction_categories` koleksiyonu: mağaza-bazlı CRUD, archived flag, ilk GET/POST'ta otomatik seed.
+- Varsayılan seed: 3 Genel (Order payments / Refunds / Service Fees) + 5 FBA + 2 PPC (10 kategori).
+- Transaction modeline opsiyonel alanlar: section (general/fba/ppc), campaign_name, ad_type, asin_sku, clicks, impressions, orders_count.
+- validate_transaction: hem legacy hem custom kategorileri doğrular; PPC alanları yalnız section=ppc'de izinli; arşivli kategoriye yeni kayıt engeli.
+- /api/categories CRUD (GET/POST/PUT/DELETE) — PUT ile isim değişimi tüm ilgili transactions'ı da cascade günceller.
+- Yeni UI: /settings/categories (CRUD + arşivle), /fba (KPI+form+liste), /ppc (CTR/ACoS + günlük/tekil mod toggle + kampanya metrikleri).
+- Transactions formu artık API'den gelen custom kategorileri de dropdown'da gösteriyor.
+- Backend testleri: 20 yeni + 21 regresyon pytest tamam (iteration_7.json). Frontend testleri: tüm E2E akışlar geçti (iteration_8.json). Küçük bir useCategories.byType sentinel bug'ı testing agent tarafından bulundu ve düzeltildi.
+
 ### P0 — Tamamlandı ve doğrulandı (2026-10-05)
 - Üç kategori, SKU kaldırma, maliyet giriş/düzenleme ve birleşik gelir/gider/net kâr özeti.
 - Refunds ürün maliyeti geri kazanımı ve kargo claim geri ödemesi; sonradan düzenleme.

@@ -30,7 +30,7 @@ export const useCategories = (storeId) => {
   useEffect(() => { refresh(); }, [refresh]);
 
   const bySection = (section) => categories.filter((c) => c.section === section && !c.archived);
-  const byType = (type, section) => categories.filter((c) => c.type === type && (!section || c.section === section) && !c.archived);
+  const byType = (type, section) => categories.filter((c) => (type == null || c.type === type) && (!section || c.section === section) && !c.archived);
 
   return { categories, loading, error, refresh, bySection, byType };
 };
