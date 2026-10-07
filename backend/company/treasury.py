@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
 from company.common import cash, cents, names, now, owned
+from company.current_accounts import current_cash_ledger_entries
 
 def debt_output(doc, people, stores):
     return {**doc, "person_name": people.get(doc["person_id"], {}).get("name", "—"), "store_name": stores.get(doc.get("store_id"), {}).get("name"),
@@ -103,6 +104,9 @@ async def company_overview(db, user_id):
         if d["cash_effect"]: add(d["id"], d["date"], d["currency"], d["principal_cents"] * sign, "debt_" + d["direction"], d["note"], d["created_at"], d["person_id"], d.get("store_id"))
         for p in d["payments"]:
             add(p["id"], p["date"], d["currency"], -sign * p["amount_cents"], "repayment" if sign == 1 else "collection", p["note"], p["created_at"], d["person_id"], d.get("store_id"))
+    for entry in await current_cash_ledger_entries(db, user_id):
+        balances[entry["currency"]]["cash_balance"] += cents(entry["amount"])
+        ledger.append(entry)
     for e in await db.company_cash.find({"user_id": user_id}, {"_id": 0}).to_list(None):
         add(e["id"], e["date"], e["currency"], e["amount_cents"] * (1 if e["direction"] == "in" else -1), "cash_" + e["direction"], e["note"], e["created_at"], source="cash")
     closings = await db.company_closings.find({"user_id": user_id}, {"_id": 0}).to_list(None)

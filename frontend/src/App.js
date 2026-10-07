@@ -15,7 +15,7 @@ import Stores from "@/pages/Stores";
 import { CompanyLayout } from "@/components/company/CompanyLayout";
 import CompanyOverview from "@/pages/company/Overview";
 import Capital from "@/pages/company/Capital";
-import Debts from "@/pages/company/Debts";
+import Debts from "@/pages/company/CurrentAccounts";
 import Closings from "@/pages/company/Closings";
 import SectionLedger from "@/pages/SectionLedger";
 import CategorySettings from "@/pages/CategorySettings";

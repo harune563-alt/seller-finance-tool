@@ -168,6 +168,47 @@ class DebtOut(BaseModel):
     status: str
     payments: list[PaymentOut]
 
+
+CashEffect = Literal["none", "in", "out"]
+CashStatus = Literal["pending", "completed"]
+
+class CurrentEntryIn(AmountIn):
+    person_id: str
+    store_id: Optional[str] = None
+    direction: Literal["payable", "receivable"]
+    currency: Currency
+    cash_effect: CashEffect = "none"
+    cash_status: CashStatus = "pending"
+
+class CurrentEntryOut(BaseModel):
+    id: str
+    person_id: str
+    person_name: str
+    store_id: Optional[str] = None
+    store_name: Optional[str] = None
+    direction: str
+    currency: str
+    amount: float
+    date: str
+    note: str
+    cash_effect: str
+    cash_status: str
+    balance_after: float
+    created_at: str
+
+class CurrentAccountSummary(BaseModel):
+    person_id: str
+    person_name: str
+    currency: str
+    total_payable: float
+    total_receivable: float
+    net_balance: float
+    entry_count: int
+
+class CurrentAccountOut(BaseModel):
+    summaries: list[CurrentAccountSummary]
+    entries: list[CurrentEntryOut]
+
 class CapitalEntryOut(BaseModel):
     id: str
     store_id: str

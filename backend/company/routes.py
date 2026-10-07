@@ -6,11 +6,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request,
 from pydantic import BaseModel, ValidationError
 from pymongo.errors import DuplicateKeyError
 from company.models import (PersonIn, PersonOut, CapitalIn, CapitalUpdateIn, CapitalOut, DebtIn, DebtUpdateIn, DebtOut,
+                            CurrentEntryIn, CurrentEntryOut, CurrentAccountOut,
                             AmountIn, CashIn, CashUpdateIn, PaymentUpdateIn, CompanyOverview, LedgerEntry, ClosingOut,
                             ClosingUpdateIn, BulkIdsIn, BulkChangesIn, JobOut, JobAccepted)
 from company.common import cash, cents, names, now, owned
 from company.capital import post_capital, capital_summary, update_capital_entry, delete_capital_entry
 from company.treasury import create_debt, settle_debt, update_debt, update_debt_payment, delete_debt_payment, debt_output, company_overview
+from company.current_accounts import create_current_entry, current_account_summary, update_current_entry, delete_current_entry
 from company.closings import queue_close
 
 class CronEnvelope(BaseModel):
@@ -47,7 +49,7 @@ def company_router(db, get_user):
 
     @router.delete("/people/{person_id}")
     async def delete_person(person_id: str, user=Depends(get_user)):
-        if await db.company_capital.find_one({"user_id": user["id"], "entries.0": {"$exists": True}, "person_id": person_id}) or await db.company_debts.find_one({"user_id": user["id"], "person_id": person_id}):
+        if await db.company_capital.find_one({"user_id": user["id"], "entries.0": {"$exists": True}, "person_id": person_id}) or await db.company_debts.find_one({"user_id": user["id"], "person_id": person_id}) or await db.company_current_entries.find_one({"user_id": user["id"], "person_id": person_id}):
             raise HTTPException(409, "Finansal geçmişi olan kişi silinemez")
         result = await db.company_people.delete_one({"id": person_id, "user_id": user["id"]})
         if result.deleted_count == 0: raise HTTPException(404, "Kişi bulunamadı")
@@ -56,7 +58,7 @@ def company_router(db, get_user):
     @router.post("/people/bulk-delete")
     async def bulk_delete_people(data: BulkIdsIn, user=Depends(get_user)):
         ids = list(dict.fromkeys(data.ids))
-        blocked = await db.company_people.find_one({"user_id": user["id"], "id": {"$in": ids}, "$or": [{"id": {"$in": await db.company_capital.distinct("person_id", {"user_id": user["id"], "entries.0": {"$exists": True}})}}, {"id": {"$in": await db.company_debts.distinct("person_id", {"user_id": user["id"]})}}]}, {"_id": 0, "id": 1})
+        blocked = await db.company_people.find_one({"user_id": user["id"], "id": {"$in": ids}, "$or": [{"id": {"$in": await db.company_capital.distinct("person_id", {"user_id": user["id"], "entries.0": {"$exists": True}})}}, {"id": {"$in": await db.company_debts.distinct("person_id", {"user_id": user["id"]})}}, {"id": {"$in": await db.company_current_entries.distinct("person_id", {"user_id": user["id"]})}}]}, {"_id": 0, "id": 1})
         if blocked: raise HTTPException(409, "Finansal geçmişi olan kişi silinemez")
         result = await db.company_people.delete_many({"id": {"$in": ids}, "user_id": user["id"]})
         if result.deleted_count == 0: raise HTTPException(404, "Silinecek kişi bulunamadı")
@@ -161,6 +163,28 @@ def company_router(db, get_user):
             updated += 1
         return {"ok": True, "updated": updated, "ids": list(dict.fromkeys(data.ids))}
 
+    @router.get("/current-accounts", response_model=CurrentAccountOut)
+    async def current_accounts(person_id: Optional[str] = None, currency: Optional[Literal["USD", "TRY"]] = None, store_id: Optional[str] = None, user=Depends(get_user)):
+        return CurrentAccountOut(**await current_account_summary(db, user["id"], person_id, currency, store_id))
+
+    @router.post("/current-accounts", response_model=CurrentEntryOut)
+    async def add_current_account_entry(data: CurrentEntryIn, user=Depends(get_user)):
+        return CurrentEntryOut(**await create_current_entry(db, user["id"], data))
+
+    @router.put("/current-accounts/{entry_id}", response_model=CurrentEntryOut)
+    async def edit_current_account_entry(entry_id: str, data: CurrentEntryIn, user=Depends(get_user)):
+        return CurrentEntryOut(**await update_current_entry(db, user["id"], entry_id, data))
+
+    @router.delete("/current-accounts/{entry_id}")
+    async def remove_current_account_entry(entry_id: str, user=Depends(get_user)):
+        return await delete_current_entry(db, user["id"], entry_id)
+
+    @router.post("/current-accounts/bulk-delete")
+    async def bulk_delete_current_account_entries(data: BulkIdsIn, user=Depends(get_user)):
+        result = await db.company_current_entries.delete_many({"id": {"$in": list(dict.fromkeys(data.ids))}, "user_id": user["id"]})
+        if result.deleted_count == 0:
+            raise HTTPException(404, "Silinecek cari hareket bulunamadı")
+        return {"ok": True, "deleted": result.deleted_count}
 
     @router.post("/debts/{debt_id}/payments", response_model=DebtOut)
     async def pay_debt(debt_id: str, data: AmountIn, user=Depends(get_user)):

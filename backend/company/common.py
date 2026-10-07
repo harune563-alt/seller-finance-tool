@@ -22,7 +22,7 @@ async def names(db, user_id):
     return {p["id"]: p for p in people}, {s["id"]: s for s in stores}
 
 async def initialize_indexes(db):
-    for name in ("company_people", "company_debts", "company_cash", "company_closings"):
+    for name in ("company_people", "company_debts", "company_current_entries", "company_cash", "company_closings"):
         await db[name].create_index([("user_id", 1), ("id", 1)], unique=True)
     await db.company_capital.create_index([("user_id", 1), ("store_id", 1), ("person_id", 1), ("currency", 1)], unique=True)
     await db.company_closings.create_index([("user_id", 1), ("store_id", 1), ("period", 1)], unique=True)
