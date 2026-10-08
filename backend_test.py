@@ -1,774 +1,704 @@
-#!/usr/bin/env python3
 """
-Backend-only verification for transaction update and bulk delete operations.
-Tests PUT /api/transactions/{id}, DELETE /api/transactions/{id}, and POST /api/transactions/bulk-delete.
+Comprehensive backend testing for Phase A Amazon import reconciliation feature.
+
+Tests idempotency, original date preservation, and import history.
 """
+import io
 import os
 import uuid
-from datetime import date, timedelta
-from decimal import Decimal
-
-import pytest
 import requests
-
+from datetime import datetime
 
 # Backend URL from environment
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://main-branch-dev.preview.emergentagent.com")
+BASE_URL = "https://main-branch-dev.preview.emergentagent.com"
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
 
-
-@pytest.fixture(scope="session")
-def base_url():
-    if not BASE_URL:
-        pytest.skip("REACT_APP_BACKEND_URL not set")
-    return BASE_URL.rstrip("/")
-
-
-@pytest.fixture(scope="session")
-def admin_session(base_url):
-    """Create authenticated admin session"""
-    s = requests.Session()
-    login = s.post(
-        f"{base_url}/api/auth/login",
-        json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-        timeout=30,
-    )
-    assert login.status_code == 200, f"Admin login failed: {login.status_code} {login.text}"
-    payload = login.json()
-    assert isinstance(payload.get("token"), str) and payload["token"], "No token in login response"
-    s.headers.update({"Authorization": f"Bearer {payload['token']}"})
-    return s
+# Test data - using PAST dates to avoid Frankfurter future date rejection
+ORDER_1 = "702-TEST-0001"
+ORDER_2 = "702-TEST-0002"
+DATE_1 = "2024-10-07"  # Original date for Order 1
+DATE_2 = "2024-10-08"  # Refund date
+DATE_3 = "2024-10-11"  # Changed date for Order 1
+DATE_4 = "2024-10-12"  # Order 2 date
 
 
-@pytest.fixture(scope="session")
-def test_user_session(base_url):
-    """Create a separate test user for cross-user testing"""
-    email = f"test_update_{uuid.uuid4().hex[:8]}@example.com"
-    password = "TestPass123!"
-    
-    s = requests.Session()
-    reg = s.post(
-        f"{base_url}/api/auth/register",
-        json={"email": email, "password": password, "name": "Test User"},
-        timeout=30,
-    )
-    assert reg.status_code == 200, f"User registration failed: {reg.status_code} {reg.text}"
-    token = reg.json()["token"]
-    s.headers.update({"Authorization": f"Bearer {token}"})
-    return s
+def create_csv_a():
+    """CSV A: Order 702-TEST-0001 100.00 on 2024-10-07, Refund -20.00 on 2024-10-08"""
+    return f"""date/time,type,order id,description,total
+{DATE_1},Order,{ORDER_1},Test Order Payment,100.00
+{DATE_2},Refund,{ORDER_1},Test Refund,-20.00
+"""
 
 
-@pytest.fixture
-def isolated_store(admin_session, base_url):
-    """Create an isolated test store"""
-    payload = {
-        "name": f"TEST_UPDATE_{uuid.uuid4().hex[:8]}",
-        "marketplaces": ["US", "CA", "UK"],
-        "default_currency": "USD",
-    }
-    r = admin_session.post(f"{base_url}/api/stores", json=payload, timeout=30)
-    assert r.status_code == 200, f"Store creation failed: {r.status_code} {r.text}"
-    store = r.json()
-    yield store
-    # Cleanup
-    admin_session.delete(f"{base_url}/api/stores/{store['id']}", timeout=30)
+def create_csv_b():
+    """CSV B: Same Order event for 702-TEST-0001 (100.00) but dated 2024-10-11, plus NEW order 702-TEST-0002 50.00 dated 2024-10-12"""
+    return f"""date/time,type,order id,description,total
+{DATE_3},Order,{ORDER_1},Test Order Payment,100.00
+{DATE_4},Order,{ORDER_2},Second Order Payment,50.00
+"""
 
 
-def _tx_payload(store_id, **overrides):
-    """Helper to create transaction payload"""
-    payload = {
-        "store_id": store_id,
-        "marketplace": "US",
-        "type": "income",
-        "category": "Order payments",
-        "amount": 100.0,
-        "currency": "USD",
-        "date": date.today().isoformat(),
-        "description": "Test transaction",
-        "order_id": f"TEST-{uuid.uuid4().hex[:6]}",
-        "payment_reference": "",
-        "product_cost": 0.0,
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
-    payload.update(overrides)
-    return payload
-
-
-def _create_tx(session, base_url, payload):
-    """Helper to create a transaction"""
-    r = session.post(f"{base_url}/api/transactions", json=payload, timeout=30)
-    assert r.status_code == 200, f"Transaction creation failed: {r.status_code} {r.text}"
-    return r.json()
-
-
-# ============================================================================
-# Test 1: Full transaction update with all editable fields
-# ============================================================================
-def test_transaction_full_update_all_fields(admin_session, base_url, isolated_store):
-    """Test PUT /api/transactions/{id} can update all editable fields"""
-    # Create an income transaction
-    original = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(
-            isolated_store["id"],
-            marketplace="US",
-            amount=100.0,
-            date="2025-01-15",
-            description="Original description",
-            order_id="ORIG-001",
-            product_cost=20.0,
-            shipping_cost=5.0,
-            extra_cost=2.0,
-        ),
-    )
+class TestReconciliation:
+    def __init__(self):
+        self.session = requests.Session()
+        self.store_id = None
+        self.store_name = None
+        self.results = []
+        
+    def log(self, test_name, passed, message="", details=None):
+        """Log test result"""
+        status = "✅ PASS" if passed else "❌ FAIL"
+        self.results.append({
+            "test": test_name,
+            "passed": passed,
+            "message": message,
+            "details": details
+        })
+        print(f"{status}: {test_name}")
+        if message:
+            print(f"  {message}")
+        if details:
+            print(f"  Details: {details}")
     
-    # Update all editable fields
-    updated_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "US",  # Same marketplace
-        "type": "income",
-        "category": "Order payments",
-        "amount": 150.0,  # Changed
-        "currency": "USD",
-        "date": "2025-01-20",  # Changed
-        "description": "Updated description",  # Changed
-        "order_id": "UPDATED-002",  # Changed
-        "payment_reference": "",
-        "product_cost": 30.0,  # Changed
-        "shipping_cost": 8.0,  # Changed
-        "extra_cost": 3.0,  # Changed
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
+    def setup(self):
+        """Setup: Login and create test store"""
+        print("\n=== SETUP ===")
+        
+        # Login
+        r = self.session.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+        )
+        if r.status_code != 200:
+            self.log("Setup - Login", False, f"Login failed with status {r.status_code}", r.text)
+            return False
+        
+        token = r.json().get("token")
+        self.session.headers.update({"Authorization": f"Bearer {token}"})
+        self.log("Setup - Login", True, f"Logged in as {ADMIN_EMAIL}")
+        
+        # Create test store
+        self.store_name = f"TEST_RECON_{uuid.uuid4().hex[:8]}"
+        r = self.session.post(
+            f"{BASE_URL}/api/stores",
+            json={
+                "name": self.store_name,
+                "marketplaces": ["US"],
+                "default_currency": "USD"
+            }
+        )
+        if r.status_code != 200:
+            self.log("Setup - Create Store", False, f"Store creation failed with status {r.status_code}", r.text)
+            return False
+        
+        self.store_id = r.json()["id"]
+        self.log("Setup - Create Store", True, f"Created store {self.store_name} (ID: {self.store_id})")
+        return True
     
-    r = admin_session.put(
-        f"{base_url}/api/transactions/{original['id']}",
-        json=updated_payload,
-        timeout=30,
-    )
-    assert r.status_code == 200, f"Transaction update failed: {r.status_code} {r.text}"
-    updated = r.json()
+    def teardown(self):
+        """Teardown: Delete test store and data"""
+        print("\n=== TEARDOWN ===")
+        if self.store_id:
+            r = self.session.delete(f"{BASE_URL}/api/stores/{self.store_id}")
+            if r.status_code == 200:
+                self.log("Teardown - Delete Store", True, f"Deleted store {self.store_name}")
+            else:
+                self.log("Teardown - Delete Store", False, f"Failed to delete store: {r.status_code}", r.text)
     
-    # Verify all fields were updated
-    assert updated["amount"] == 150.0, "Amount not updated"
-    assert updated["date"] == "2025-01-20", "Date not updated"
-    assert updated["description"] == "Updated description", "Description not updated"
-    assert updated["order_id"] == "UPDATED-002", "Order ID not updated"
-    assert updated["product_cost"] == 30.0, "Product cost not updated"
-    assert updated["shipping_cost"] == 8.0, "Shipping cost not updated"
-    assert updated["extra_cost"] == 3.0, "Extra cost not updated"
+    def get_dashboard_summary(self, start_date=None, end_date=None):
+        """Get dashboard summary for the test store"""
+        params = {
+            "store_id": self.store_id,
+            "marketplace": "US",
+            "currency": "USD"
+        }
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        
+        r = self.session.get(f"{BASE_URL}/api/dashboard/summary", params=params)
+        if r.status_code == 200:
+            return r.json()
+        return None
     
-    # Verify FX and USD amounts are recalculated
-    assert "amount_usd" in updated, "amount_usd missing"
-    assert "usd_costs" in updated, "usd_costs missing"
-    assert updated["usd_costs"]["product_cost"] == 30.0
-    assert updated["usd_costs"]["shipping_cost"] == 8.0
-    assert updated["usd_costs"]["extra_cost"] == 3.0
-
-
-# ============================================================================
-# Test 2: Update expense transaction (refund and service fee)
-# ============================================================================
-def test_transaction_update_expense_types(admin_session, base_url, isolated_store):
-    """Test updating refund and service fee transactions"""
-    order_id = f"TEST-{uuid.uuid4().hex[:6]}"
+    def import_csv(self, csv_content, commit=True):
+        """Import CSV file"""
+        files = {"file": ("payments.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")}
+        params = {
+            "store_id": self.store_id,
+            "marketplace": "US",
+            "commit": str(commit).lower()
+        }
+        r = self.session.post(f"{BASE_URL}/api/transactions/import", files=files, params=params)
+        return r
     
-    # Create a refund
-    refund = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(
-            isolated_store["id"],
-            type="expense",
-            category="Refunds",
-            amount=50.0,
-            order_id=order_id,
-            product_cost_recovery=10.0,
-            shipping_cost_recovery=5.0,
-        ),
-    )
+    def get_transactions(self):
+        """Get all transactions for the test store"""
+        r = self.session.get(
+            f"{BASE_URL}/api/transactions",
+            params={"store_id": self.store_id, "marketplace": "US", "limit": 1000}
+        )
+        if r.status_code == 200:
+            return r.json()
+        return []
     
-    # Update refund
-    updated_refund_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "US",
-        "type": "expense",
-        "category": "Refunds",
-        "amount": 60.0,  # Changed
-        "currency": "USD",
-        "date": refund["date"],
-        "description": "Updated refund",
-        "order_id": order_id,
-        "payment_reference": "",
-        "product_cost": 0.0,
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 15.0,  # Changed
-        "shipping_cost_recovery": 7.0,  # Changed
-    }
+    def get_import_history(self):
+        """Get import history"""
+        r = self.session.get(
+            f"{BASE_URL}/api/transactions/import/history",
+            params={"store_id": self.store_id, "limit": 50}
+        )
+        if r.status_code == 200:
+            return r.json()
+        return []
     
-    r = admin_session.put(
-        f"{base_url}/api/transactions/{refund['id']}",
-        json=updated_refund_payload,
-        timeout=30,
-    )
-    assert r.status_code == 200, f"Refund update failed: {r.status_code} {r.text}"
-    updated_refund = r.json()
-    assert updated_refund["amount"] == 60.0
-    assert updated_refund["product_cost_recovery"] == 15.0
-    assert updated_refund["shipping_cost_recovery"] == 7.0
+    def get_date_history(self, order_id):
+        """Get date change history for an order"""
+        r = self.session.get(
+            f"{BASE_URL}/api/transactions/date-history",
+            params={"order_id": order_id, "store_id": self.store_id}
+        )
+        if r.status_code == 200:
+            return r.json()
+        return []
     
-    # Create a service fee
-    fee = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(
-            isolated_store["id"],
-            type="expense",
-            category="Service Fees",
-            amount=10.0,
-            order_id=order_id,
-        ),
-    )
+    def test_1_same_file_twice(self):
+        """TEST 1: Import same CSV twice - verify idempotency"""
+        print("\n=== TEST 1: SAME FILE TWICE ===")
+        
+        csv_a = create_csv_a()
+        
+        # First import with commit=true
+        r1 = self.import_csv(csv_a, commit=True)
+        if r1.status_code != 200:
+            self.log("Test 1.1 - First Import", False, f"Import failed: {r1.status_code}", r1.text)
+            return
+        
+        data1 = r1.json()
+        if data1.get("inserted") != 2:
+            self.log("Test 1.1 - First Import", False, f"Expected inserted=2, got {data1.get('inserted')}", data1)
+            return
+        
+        if not data1.get("reconciliation") or data1["reconciliation"].get("new") != 2:
+            self.log("Test 1.1 - First Import", False, f"Expected reconciliation.new=2, got {data1.get('reconciliation', {}).get('new')}", data1)
+            return
+        
+        self.log("Test 1.1 - First Import", True, f"Inserted 2 new records, reconciliation.new=2")
+        
+        # Record dashboard totals
+        summary1 = self.get_dashboard_summary()
+        if not summary1:
+            self.log("Test 1.2 - Dashboard After First Import", False, "Failed to get dashboard summary")
+            return
+        
+        revenue1 = summary1.get("revenue", 0)
+        expenses1 = summary1.get("expenses", 0)
+        count1 = summary1.get("transaction_count", 0)
+        self.log("Test 1.2 - Dashboard After First Import", True, 
+                f"Revenue: {revenue1}, Expenses: {expenses1}, Count: {count1}")
+        
+        # Second import - same file
+        r2 = self.import_csv(csv_a, commit=True)
+        if r2.status_code != 200:
+            self.log("Test 1.3 - Second Import (Same File)", False, f"Import failed: {r2.status_code}", r2.text)
+            return
+        
+        data2 = r2.json()
+        if data2.get("inserted") != 0:
+            self.log("Test 1.3 - Second Import (Same File)", False, 
+                    f"Expected inserted=0 (idempotent), got {data2.get('inserted')}", data2)
+            return
+        
+        if not data2.get("reconciliation") or data2["reconciliation"].get("existing_unchanged") != 2:
+            self.log("Test 1.3 - Second Import (Same File)", False, 
+                    f"Expected reconciliation.existing_unchanged=2, got {data2.get('reconciliation', {}).get('existing_unchanged')}", data2)
+            return
+        
+        self.log("Test 1.3 - Second Import (Same File)", True, 
+                f"Inserted 0, reconciliation.existing_unchanged=2 (idempotent)")
+        
+        # Verify dashboard totals are IDENTICAL
+        summary2 = self.get_dashboard_summary()
+        if not summary2:
+            self.log("Test 1.4 - Dashboard After Second Import", False, "Failed to get dashboard summary")
+            return
+        
+        revenue2 = summary2.get("revenue", 0)
+        expenses2 = summary2.get("expenses", 0)
+        count2 = summary2.get("transaction_count", 0)
+        
+        if revenue1 != revenue2 or expenses1 != expenses2 or count1 != count2:
+            self.log("Test 1.4 - Dashboard After Second Import", False, 
+                    f"Dashboard totals changed! Before: R={revenue1}, E={expenses1}, C={count1}. After: R={revenue2}, E={expenses2}, C={count2}")
+            return
+        
+        self.log("Test 1.4 - Dashboard After Second Import", True, 
+                f"Dashboard totals IDENTICAL (critical financial rule verified)")
+        
+        # Third import - verify still identical
+        r3 = self.import_csv(csv_a, commit=True)
+        if r3.status_code != 200:
+            self.log("Test 1.5 - Third Import (Same File)", False, f"Import failed: {r3.status_code}", r3.text)
+            return
+        
+        data3 = r3.json()
+        summary3 = self.get_dashboard_summary()
+        
+        if data3.get("inserted") != 0 or not summary3:
+            self.log("Test 1.5 - Third Import (Same File)", False, 
+                    f"Expected inserted=0, got {data3.get('inserted')}")
+            return
+        
+        revenue3 = summary3.get("revenue", 0)
+        expenses3 = summary3.get("expenses", 0)
+        count3 = summary3.get("transaction_count", 0)
+        
+        if revenue1 != revenue3 or expenses1 != expenses3 or count1 != count3:
+            self.log("Test 1.5 - Third Import (Same File)", False, 
+                    f"Dashboard totals changed on third import!")
+            return
+        
+        self.log("Test 1.5 - Third Import (Same File)", True, 
+                f"Third import still identical (idempotency verified)")
     
-    # Update service fee
-    updated_fee_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "US",
-        "type": "expense",
-        "category": "Service Fees",
-        "amount": 15.0,  # Changed
-        "currency": "USD",
-        "date": fee["date"],
-        "description": "Updated fee",
-        "order_id": order_id,
-        "payment_reference": "",
-        "product_cost": 0.0,
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
+    def test_2_overlapping_with_date_change(self):
+        """TEST 2: Import overlapping report with date change"""
+        print("\n=== TEST 2: OVERLAPPING REPORT WITH DATE CHANGE ===")
+        
+        csv_b = create_csv_b()
+        
+        # Import CSV B
+        r = self.import_csv(csv_b, commit=True)
+        if r.status_code != 200:
+            self.log("Test 2.1 - Import CSV B", False, f"Import failed: {r.status_code}", r.text)
+            return
+        
+        data = r.json()
+        
+        # Verify inserted=1 (only the new order 702-TEST-0002)
+        if data.get("inserted") != 1:
+            self.log("Test 2.1 - Import CSV B", False, 
+                    f"Expected inserted=1 (new order), got {data.get('inserted')}", data)
+            return
+        
+        # Verify reconciliation.date_changed=1
+        recon = data.get("reconciliation", {})
+        if recon.get("date_changed") != 1:
+            self.log("Test 2.1 - Import CSV B", False, 
+                    f"Expected reconciliation.date_changed=1, got {recon.get('date_changed')}", data)
+            return
+        
+        self.log("Test 2.1 - Import CSV B", True, 
+                f"Inserted 1 new order, date_changed=1")
+        
+        # Verify date_changes shows the change
+        date_changes = data.get("date_changes", [])
+        if len(date_changes) != 1:
+            self.log("Test 2.2 - Date Changes Array", False, 
+                    f"Expected 1 date change, got {len(date_changes)}", date_changes)
+            return
+        
+        change = date_changes[0]
+        if change.get("order_id") != ORDER_1:
+            self.log("Test 2.2 - Date Changes Array", False, 
+                    f"Expected order_id={ORDER_1}, got {change.get('order_id')}", change)
+            return
+        
+        if change.get("previous_reported_date") != DATE_1 or change.get("new_reported_date") != DATE_3:
+            self.log("Test 2.2 - Date Changes Array", False, 
+                    f"Expected date change {DATE_1} → {DATE_3}, got {change.get('previous_reported_date')} → {change.get('new_reported_date')}", change)
+            return
+        
+        self.log("Test 2.2 - Date Changes Array", True, 
+                f"Date change recorded: {ORDER_1}: {DATE_1} → {DATE_3}")
+        
+        # Verify transaction record via API
+        transactions = self.get_transactions()
+        order_1_income = [t for t in transactions if t.get("order_id") == ORDER_1 and t.get("type") == "income"]
+        
+        if len(order_1_income) != 1:
+            self.log("Test 2.3 - Transaction Record Verification", False, 
+                    f"Expected 1 income record for {ORDER_1}, got {len(order_1_income)}", 
+                    [t.get("id") for t in order_1_income])
+            return
+        
+        tx = order_1_income[0]
+        
+        # Verify date still = original date (2024-10-07)
+        if tx.get("date") != DATE_1:
+            self.log("Test 2.3 - Transaction Record Verification", False, 
+                    f"Expected date={DATE_1} (original), got {tx.get('date')}", tx)
+            return
+        
+        # Verify original_transaction_date = 2024-10-07
+        if tx.get("original_transaction_date") != DATE_1:
+            self.log("Test 2.3 - Transaction Record Verification", False, 
+                    f"Expected original_transaction_date={DATE_1}, got {tx.get('original_transaction_date')}", tx)
+            return
+        
+        # Verify latest_amazon_reported_date = 2024-10-11
+        if tx.get("latest_amazon_reported_date") != DATE_3:
+            self.log("Test 2.3 - Transaction Record Verification", False, 
+                    f"Expected latest_amazon_reported_date={DATE_3}, got {tx.get('latest_amazon_reported_date')}", tx)
+            return
+        
+        # Verify date_changed = true
+        if tx.get("date_changed") != True:
+            self.log("Test 2.3 - Transaction Record Verification", False, 
+                    f"Expected date_changed=true, got {tx.get('date_changed')}", tx)
+            return
+        
+        self.log("Test 2.3 - Transaction Record Verification", True, 
+                f"Transaction {ORDER_1}: date={DATE_1} (original), latest_amazon_reported_date={DATE_3}, date_changed=true")
+        
+        # Verify NO second revenue transaction created
+        summary = self.get_dashboard_summary()
+        if not summary:
+            self.log("Test 2.4 - Dashboard Totals", False, "Failed to get dashboard summary")
+            return
+        
+        revenue = summary.get("revenue", 0)
+        count = summary.get("transaction_count", 0)
+        
+        # Expected: 100 (Order 1) + 50 (Order 2) = 150 revenue, 3 transactions total (Order 1, Refund, Order 2)
+        if revenue != 150:
+            self.log("Test 2.4 - Dashboard Totals", False, 
+                    f"Expected revenue=150 (100+50), got {revenue}. NO duplicate revenue should be created!", summary)
+            return
+        
+        if count != 3:
+            self.log("Test 2.4 - Dashboard Totals", False, 
+                    f"Expected transaction_count=3 (Order 1, Refund, Order 2), got {count}", summary)
+            return
+        
+        self.log("Test 2.4 - Dashboard Totals", True, 
+                f"Revenue=150, Count=3 (NO duplicate revenue created)")
+        
+        # Verify date history API
+        date_history = self.get_date_history(ORDER_1)
+        if len(date_history) != 1:
+            self.log("Test 2.5 - Date History API", False, 
+                    f"Expected 1 date history entry, got {len(date_history)}", date_history)
+            return
+        
+        history = date_history[0]
+        if history.get("previous_reported_date") != DATE_1 or history.get("new_reported_date") != DATE_3:
+            self.log("Test 2.5 - Date History API", False, 
+                    f"Expected history {DATE_1} → {DATE_3}, got {history.get('previous_reported_date')} → {history.get('new_reported_date')}", history)
+            return
+        
+        self.log("Test 2.5 - Date History API", True, 
+                f"Date history API: 1 entry with {DATE_1} → {DATE_3}")
     
-    r = admin_session.put(
-        f"{base_url}/api/transactions/{fee['id']}",
-        json=updated_fee_payload,
-        timeout=30,
-    )
-    assert r.status_code == 200, f"Service fee update failed: {r.status_code} {r.text}"
-    updated_fee = r.json()
-    assert updated_fee["amount"] == 15.0
-
-
-# ============================================================================
-# Test 3: Update payout transaction
-# ============================================================================
-def test_transaction_update_payout(admin_session, base_url, isolated_store):
-    """Test updating payout transactions"""
-    # Create a payout
-    payout = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(
-            isolated_store["id"],
-            type="payout",
-            category="Oluşturuldu",
-            amount=100.0,
-            order_id="",
-            payment_reference="PAY-001",
-        ),
-    )
+    def test_3_reimport_b_again(self):
+        """TEST 3: Re-import CSV B again - verify no duplicate history"""
+        print("\n=== TEST 3: RE-IMPORT B AGAIN ===")
+        
+        csv_b = create_csv_b()
+        
+        # Re-import CSV B
+        r = self.import_csv(csv_b, commit=True)
+        if r.status_code != 200:
+            self.log("Test 3.1 - Re-import CSV B", False, f"Import failed: {r.status_code}", r.text)
+            return
+        
+        data = r.json()
+        
+        # Verify inserted=0 (all unchanged)
+        if data.get("inserted") != 0:
+            self.log("Test 3.1 - Re-import CSV B", False, 
+                    f"Expected inserted=0, got {data.get('inserted')}", data)
+            return
+        
+        # Verify all unchanged
+        recon = data.get("reconciliation", {})
+        if recon.get("existing_unchanged") != 2:
+            self.log("Test 3.1 - Re-import CSV B", False, 
+                    f"Expected reconciliation.existing_unchanged=2, got {recon.get('existing_unchanged')}", data)
+            return
+        
+        self.log("Test 3.1 - Re-import CSV B", True, 
+                f"Inserted 0, all unchanged (idempotent)")
+        
+        # Verify date history still exactly 1 entry (no duplicate)
+        date_history = self.get_date_history(ORDER_1)
+        if len(date_history) != 1:
+            self.log("Test 3.2 - Date History (No Duplicate)", False, 
+                    f"Expected exactly 1 date history entry, got {len(date_history)} (duplicate history created!)", date_history)
+            return
+        
+        self.log("Test 3.2 - Date History (No Duplicate)", True, 
+                f"Date history still exactly 1 entry (no duplicate)")
     
-    # Update payout
-    updated_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "US",
-        "type": "payout",
-        "category": "Bankada",  # Changed status
-        "amount": 120.0,  # Changed
-        "currency": "USD",
-        "date": payout["date"],
-        "description": "Updated payout",
-        "order_id": "",
-        "payment_reference": "PAY-002",  # Changed
-        "product_cost": 0.0,
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
+    def test_4_reimport_original_a(self):
+        """TEST 4: Re-import original CSV A after B - verify no date flip-flop"""
+        print("\n=== TEST 4: RE-IMPORT ORIGINAL A AFTER B ===")
+        
+        csv_a = create_csv_a()
+        
+        # Re-import CSV A (with original dates)
+        r = self.import_csv(csv_a, commit=True)
+        if r.status_code != 200:
+            self.log("Test 4.1 - Re-import CSV A", False, f"Import failed: {r.status_code}", r.text)
+            return
+        
+        data = r.json()
+        
+        # Verify inserted=0
+        if data.get("inserted") != 0:
+            self.log("Test 4.1 - Re-import CSV A", False, 
+                    f"Expected inserted=0, got {data.get('inserted')}", data)
+            return
+        
+        self.log("Test 4.1 - Re-import CSV A", True, 
+                f"Inserted 0 (idempotent)")
+        
+        # Verify original_transaction_date stays 2024-10-07 (no flip-flop corruption)
+        transactions = self.get_transactions()
+        order_1_income = [t for t in transactions if t.get("order_id") == ORDER_1 and t.get("type") == "income"]
+        
+        if len(order_1_income) != 1:
+            self.log("Test 4.2 - No Date Flip-Flop", False, 
+                    f"Expected 1 income record for {ORDER_1}, got {len(order_1_income)}")
+            return
+        
+        tx = order_1_income[0]
+        
+        # Verify original_transaction_date still = 2024-10-07
+        if tx.get("original_transaction_date") != DATE_1:
+            self.log("Test 4.2 - No Date Flip-Flop", False, 
+                    f"DATE FLIP-FLOP CORRUPTION! Expected original_transaction_date={DATE_1}, got {tx.get('original_transaction_date')}", tx)
+            return
+        
+        # Verify date still = 2024-10-07
+        if tx.get("date") != DATE_1:
+            self.log("Test 4.2 - No Date Flip-Flop", False, 
+                    f"DATE FLIP-FLOP CORRUPTION! Expected date={DATE_1}, got {tx.get('date')}", tx)
+            return
+        
+        self.log("Test 4.2 - No Date Flip-Flop", True, 
+                f"original_transaction_date stays {DATE_1} (no flip-flop corruption)")
     
-    r = admin_session.put(
-        f"{base_url}/api/transactions/{payout['id']}",
-        json=updated_payload,
-        timeout=30,
-    )
-    assert r.status_code == 200, f"Payout update failed: {r.status_code} {r.text}"
-    updated = r.json()
-    assert updated["amount"] == 120.0
-    assert updated["category"] == "Bankada"
-    assert updated["payment_reference"] == "PAY-002"
-
-
-# ============================================================================
-# Test 4: Update CAD transaction and verify FX recalculation
-# ============================================================================
-def test_transaction_update_cad_fx_recalculation(admin_session, base_url, isolated_store):
-    """Test updating CAD transaction recalculates FX and USD amounts"""
-    # Create a CAD transaction
-    test_date = (date.today() - timedelta(days=7)).isoformat()
-    cad_tx = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(
-            isolated_store["id"],
-            marketplace="CA",
-            currency="CAD",
-            amount=100.0,
-            date=test_date,
-            product_cost=20.0,
-        ),
-    )
+    def test_5_import_history(self):
+        """TEST 5: Verify import history endpoint"""
+        print("\n=== TEST 5: IMPORT HISTORY ===")
+        
+        history = self.get_import_history()
+        
+        if len(history) < 5:  # We did 5 imports (3x CSV A, 2x CSV B)
+            self.log("Test 5.1 - Import History Count", False, 
+                    f"Expected at least 5 batch records, got {len(history)}", history)
+            return
+        
+        self.log("Test 5.1 - Import History Count", True, 
+                f"Found {len(history)} batch records")
+        
+        # Verify batch records have correct structure
+        for i, batch in enumerate(history[:3]):  # Check first 3
+            if not batch.get("id"):
+                self.log(f"Test 5.2.{i+1} - Batch Structure", False, 
+                        f"Batch missing 'id' field", batch)
+                return
+            
+            if not batch.get("file_name"):
+                self.log(f"Test 5.2.{i+1} - Batch Structure", False, 
+                        f"Batch missing 'file_name' field", batch)
+                return
+            
+            if batch.get("status") != "completed":
+                self.log(f"Test 5.2.{i+1} - Batch Structure", False, 
+                        f"Expected status='completed', got {batch.get('status')}", batch)
+                return
+            
+            # Check counts exist
+            required_fields = ["new", "existing_unchanged", "existing_updated", "date_changed", "inserted"]
+            for field in required_fields:
+                if field not in batch:
+                    self.log(f"Test 5.2.{i+1} - Batch Structure", False, 
+                            f"Batch missing '{field}' field", batch)
+                    return
+        
+        self.log("Test 5.2 - Batch Structure", True, 
+                f"All batch records have correct structure (id, file_name, status, counts)")
+        
+        # Verify report_date_min/max
+        for i, batch in enumerate(history[:3]):
+            if not batch.get("report_date_min") or not batch.get("report_date_max"):
+                self.log(f"Test 5.3.{i+1} - Report Date Range", False, 
+                        f"Batch missing report_date_min/max", batch)
+                return
+        
+        self.log("Test 5.3 - Report Date Range", True, 
+                f"All batches have report_date_min/max")
     
-    original_fx = cad_tx["fx"]
-    original_amount_usd = cad_tx["amount_usd"]
+    def test_6_dashboard_date_filtering(self):
+        """TEST 6: Verify dashboard date filtering uses original date"""
+        print("\n=== TEST 6: DASHBOARD DATE FILTERING ===")
+        
+        # Filter: 2024-10-07 to 2024-10-09 (should include Order 1 with original date 2024-10-07)
+        summary = self.get_dashboard_summary(start_date=DATE_1, end_date=DATE_2)
+        
+        if not summary:
+            self.log("Test 6.1 - Date Filtering", False, "Failed to get dashboard summary")
+            return
+        
+        revenue = summary.get("revenue", 0)
+        count = summary.get("transaction_count", 0)
+        
+        # Expected: Order 1 (100) + Refund (-20) in this range
+        # Order 1 should be included because its ORIGINAL date is 2024-10-07, even though latest_amazon_reported_date is 2024-10-11
+        if revenue != 100:
+            self.log("Test 6.1 - Date Filtering", False, 
+                    f"Expected revenue=100 (Order 1 in date range using original date), got {revenue}. Original date NOT used for filtering!", summary)
+            return
+        
+        if count != 2:
+            self.log("Test 6.1 - Date Filtering", False, 
+                    f"Expected count=2 (Order 1 + Refund), got {count}", summary)
+            return
+        
+        self.log("Test 6.1 - Date Filtering", True, 
+                f"Date filtering uses original date (revenue=100, count=2 in range {DATE_1} to {DATE_2})")
     
-    # Update amount
-    updated_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "CA",
-        "type": "income",
-        "category": "Order payments",
-        "amount": 150.0,  # Changed
-        "currency": "CAD",
-        "date": test_date,  # Same date
-        "description": "Updated CAD transaction",
-        "order_id": cad_tx["order_id"],
-        "payment_reference": "",
-        "product_cost": 30.0,  # Changed
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
+    def test_7_regression(self):
+        """TEST 7: Run existing finance regression suite"""
+        print("\n=== TEST 7: FINANCE REGRESSION SUITE ===")
+        
+        # Run the existing regression tests
+        import subprocess
+        result = subprocess.run(
+            ["python", "-m", "pytest", "/app/backend/tests/test_finance_regression.py", "-v"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "REACT_APP_BACKEND_URL": BASE_URL}
+        )
+        
+        if result.returncode != 0:
+            self.log("Test 7 - Finance Regression", False, 
+                    f"Regression tests failed with exit code {result.returncode}", 
+                    result.stdout + "\n" + result.stderr)
+            return
+        
+        # Parse output for pass/fail count
+        output = result.stdout + result.stderr
+        if "passed" in output:
+            self.log("Test 7 - Finance Regression", True, 
+                    f"All regression tests passed")
+        else:
+            self.log("Test 7 - Finance Regression", False, 
+                    f"Regression tests output unclear", output)
     
-    r = admin_session.put(
-        f"{base_url}/api/transactions/{cad_tx['id']}",
-        json=updated_payload,
-        timeout=30,
-    )
-    assert r.status_code == 200, f"CAD transaction update failed: {r.status_code} {r.text}"
-    updated = r.json()
+    def test_8_preview_mode(self):
+        """TEST 8: Verify preview mode (commit=false) doesn't write"""
+        print("\n=== TEST 8: PREVIEW MODE ===")
+        
+        # Create a new CSV with unique order ID
+        order_preview = f"702-TEST-PREVIEW-{uuid.uuid4().hex[:6]}"
+        csv_preview = f"""date/time,type,order id,description,total
+{DATE_1},Order,{order_preview},Preview Order,999.00
+"""
+        
+        # Import with commit=false
+        r = self.import_csv(csv_preview, commit=False)
+        if r.status_code != 200:
+            self.log("Test 8.1 - Preview Import", False, f"Import failed: {r.status_code}", r.text)
+            return
+        
+        data = r.json()
+        
+        # Verify committed=false
+        if data.get("committed") != False:
+            self.log("Test 8.1 - Preview Import", False, 
+                    f"Expected committed=false, got {data.get('committed')}", data)
+            return
+        
+        # Verify inserted=0 (nothing written)
+        if data.get("inserted") != 0:
+            self.log("Test 8.1 - Preview Import", False, 
+                    f"Expected inserted=0 in preview mode, got {data.get('inserted')}", data)
+            return
+        
+        # Verify accepted=1 (parsed successfully)
+        if data.get("accepted") != 1:
+            self.log("Test 8.1 - Preview Import", False, 
+                    f"Expected accepted=1, got {data.get('accepted')}", data)
+            return
+        
+        self.log("Test 8.1 - Preview Import", True, 
+                f"Preview mode: committed=false, inserted=0, accepted=1")
+        
+        # Verify no transaction was created
+        transactions = self.get_transactions()
+        preview_txs = [t for t in transactions if t.get("order_id") == order_preview]
+        
+        if len(preview_txs) > 0:
+            self.log("Test 8.2 - No Data Written", False, 
+                    f"Preview mode wrote data! Found {len(preview_txs)} transactions with order_id={order_preview}", preview_txs)
+            return
+        
+        self.log("Test 8.2 - No Data Written", True, 
+                f"No transactions written in preview mode")
+        
+        # Verify no batch record was created
+        history = self.get_import_history()
+        preview_batches = [b for b in history if order_preview in str(b)]
+        
+        if len(preview_batches) > 0:
+            self.log("Test 8.3 - No Batch Record", False, 
+                    f"Preview mode created batch record!", preview_batches)
+            return
+        
+        self.log("Test 8.3 - No Batch Record", True, 
+                f"No batch record created in preview mode")
     
-    # Verify FX is recalculated
-    assert updated["amount"] == 150.0
-    assert updated["currency"] == "CAD"
-    assert "amount_usd" in updated
-    assert "fx" in updated
-    # FX rate should be the same for the same date
-    assert updated["fx"]["rate"] == original_fx["rate"]
-    # But amount_usd should be different
-    assert updated["amount_usd"] != original_amount_usd
-
-
-# ============================================================================
-# Test 5: Validation - Invalid category/type combination
-# ============================================================================
-def test_transaction_update_invalid_category_type(admin_session, base_url, isolated_store):
-    """Test that invalid category/type combinations are rejected"""
-    # Create an income transaction
-    tx = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(isolated_store["id"], amount=100.0),
-    )
-    
-    # Try to update with invalid category for income
-    invalid_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "US",
-        "type": "income",
-        "category": "Refunds",  # Invalid: Refunds is expense
-        "amount": 100.0,
-        "currency": "USD",
-        "date": tx["date"],
-        "description": "",
-        "order_id": tx["order_id"],
-        "payment_reference": "",
-        "product_cost": 0.0,
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
-    
-    r = admin_session.put(
-        f"{base_url}/api/transactions/{tx['id']}",
-        json=invalid_payload,
-        timeout=30,
-    )
-    assert r.status_code == 400, f"Expected 400 for invalid category/type, got {r.status_code}"
-
-
-# ============================================================================
-# Test 6: Validation - Marketplace/currency mismatch
-# ============================================================================
-def test_transaction_update_marketplace_currency_mismatch(admin_session, base_url, isolated_store):
-    """Test that marketplace/currency mismatch is rejected"""
-    # Create a US transaction
-    tx = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(isolated_store["id"], marketplace="US", currency="USD"),
-    )
-    
-    # Try to update with mismatched currency
-    invalid_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "US",
-        "type": "income",
-        "category": "Order payments",
-        "amount": 100.0,
-        "currency": "CAD",  # Invalid: US marketplace requires USD
-        "date": tx["date"],
-        "description": "",
-        "order_id": tx["order_id"],
-        "payment_reference": "",
-        "product_cost": 0.0,
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
-    
-    r = admin_session.put(
-        f"{base_url}/api/transactions/{tx['id']}",
-        json=invalid_payload,
-        timeout=30,
-    )
-    assert r.status_code == 400, f"Expected 400 for marketplace/currency mismatch, got {r.status_code}"
-
-
-# ============================================================================
-# Test 7: Validation - Future date FX unavailable
-# ============================================================================
-def test_transaction_update_future_date_rejected(admin_session, base_url, isolated_store):
-    """Test that future dates are rejected for FX"""
-    # Create a CAD transaction
-    test_date = (date.today() - timedelta(days=7)).isoformat()
-    tx = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(
-            isolated_store["id"],
-            marketplace="CA",
-            currency="CAD",
-            date=test_date,
-        ),
-    )
-    
-    # Try to update with future date
-    future_date = (date.today() + timedelta(days=5)).isoformat()
-    invalid_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "CA",
-        "type": "income",
-        "category": "Order payments",
-        "amount": 100.0,
-        "currency": "CAD",
-        "date": future_date,  # Future date
-        "description": "",
-        "order_id": tx["order_id"],
-        "payment_reference": "",
-        "product_cost": 0.0,
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
-    
-    r = admin_session.put(
-        f"{base_url}/api/transactions/{tx['id']}",
-        json=invalid_payload,
-        timeout=30,
-    )
-    assert r.status_code == 422, f"Expected 422 for future date, got {r.status_code}"
-
-
-# ============================================================================
-# Test 8: Cross-user update denied
-# ============================================================================
-def test_transaction_update_cross_user_denied(admin_session, test_user_session, base_url, isolated_store):
-    """Test that users cannot update other users' transactions"""
-    # Admin creates a transaction
-    tx = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(isolated_store["id"], amount=100.0),
-    )
-    
-    # Test user tries to update admin's transaction
-    update_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "US",
-        "type": "income",
-        "category": "Order payments",
-        "amount": 200.0,
-        "currency": "USD",
-        "date": tx["date"],
-        "description": "Hacked",
-        "order_id": tx["order_id"],
-        "payment_reference": "",
-        "product_cost": 0.0,
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
-    
-    r = test_user_session.put(
-        f"{base_url}/api/transactions/{tx['id']}",
-        json=update_payload,
-        timeout=30,
-    )
-    assert r.status_code == 404, f"Expected 404 for cross-user update, got {r.status_code}"
-
-
-# ============================================================================
-# Test 9: Single transaction deletion
-# ============================================================================
-def test_transaction_single_delete(admin_session, base_url, isolated_store):
-    """Test DELETE /api/transactions/{id} deletes a single transaction"""
-    # Create a transaction
-    tx = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(isolated_store["id"], amount=100.0),
-    )
-    
-    # Delete it
-    r = admin_session.delete(f"{base_url}/api/transactions/{tx['id']}", timeout=30)
-    assert r.status_code == 200, f"Transaction deletion failed: {r.status_code} {r.text}"
-    assert r.json()["ok"] is True
-    
-    # Verify it's gone
-    list_r = admin_session.get(
-        f"{base_url}/api/transactions",
-        params={"store_id": isolated_store["id"]},
-        timeout=30,
-    )
-    assert list_r.status_code == 200
-    transactions = list_r.json()
-    assert not any(t["id"] == tx["id"] for t in transactions), "Transaction still exists after deletion"
-
-
-# ============================================================================
-# Test 10: Bulk transaction deletion
-# ============================================================================
-def test_transaction_bulk_delete(admin_session, base_url, isolated_store):
-    """Test POST /api/transactions/bulk-delete deletes multiple transactions"""
-    # Create multiple transactions
-    tx1 = _create_tx(admin_session, base_url, _tx_payload(isolated_store["id"], amount=100.0))
-    tx2 = _create_tx(admin_session, base_url, _tx_payload(isolated_store["id"], amount=200.0))
-    tx3 = _create_tx(admin_session, base_url, _tx_payload(isolated_store["id"], amount=300.0))
-    
-    # Bulk delete tx1 and tx2
-    r = admin_session.post(
-        f"{base_url}/api/transactions/bulk-delete",
-        json={"ids": [tx1["id"], tx2["id"]]},
-        timeout=30,
-    )
-    assert r.status_code == 200, f"Bulk delete failed: {r.status_code} {r.text}"
-    result = r.json()
-    assert result["ok"] is True
-    assert result["deleted"] == 2, f"Expected 2 deleted, got {result['deleted']}"
-    
-    # Verify only tx3 remains
-    list_r = admin_session.get(
-        f"{base_url}/api/transactions",
-        params={"store_id": isolated_store["id"]},
-        timeout=30,
-    )
-    assert list_r.status_code == 200
-    transactions = list_r.json()
-    remaining_ids = [t["id"] for t in transactions]
-    assert tx1["id"] not in remaining_ids, "tx1 still exists"
-    assert tx2["id"] not in remaining_ids, "tx2 still exists"
-    assert tx3["id"] in remaining_ids, "tx3 was deleted"
-
-
-# ============================================================================
-# Test 11: Cross-user bulk delete denied
-# ============================================================================
-def test_transaction_bulk_delete_cross_user_denied(admin_session, test_user_session, base_url, isolated_store):
-    """Test that users cannot delete other users' transactions via bulk delete"""
-    # Admin creates transactions
-    tx1 = _create_tx(admin_session, base_url, _tx_payload(isolated_store["id"], amount=100.0))
-    tx2 = _create_tx(admin_session, base_url, _tx_payload(isolated_store["id"], amount=200.0))
-    
-    # Test user tries to bulk delete admin's transactions
-    r = test_user_session.post(
-        f"{base_url}/api/transactions/bulk-delete",
-        json={"ids": [tx1["id"], tx2["id"]]},
-        timeout=30,
-    )
-    assert r.status_code == 404, f"Expected 404 for cross-user bulk delete, got {r.status_code}"
-    
-    # Verify transactions still exist
-    list_r = admin_session.get(
-        f"{base_url}/api/transactions",
-        params={"store_id": isolated_store["id"]},
-        timeout=30,
-    )
-    assert list_r.status_code == 200
-    transactions = list_r.json()
-    remaining_ids = [t["id"] for t in transactions]
-    assert tx1["id"] in remaining_ids, "tx1 was deleted"
-    assert tx2["id"] in remaining_ids, "tx2 was deleted"
-
-
-# ============================================================================
-# Test 12: Payout update affects summary and native balance
-# ============================================================================
-def test_payout_update_affects_summary(admin_session, base_url, isolated_store):
-    """Test that payout updates affect summary and native balance correctly"""
-    # Create an income transaction
-    income = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(isolated_store["id"], amount=1000.0),
-    )
-    
-    # Create a payout
-    payout = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(
-            isolated_store["id"],
-            type="payout",
-            category="Bankada",
-            amount=500.0,
-            order_id="",
-        ),
-    )
-    
-    # Get summary before update
-    summary_before = admin_session.get(
-        f"{base_url}/api/dashboard/summary",
-        params={"store_id": isolated_store["id"], "marketplace": "US", "currency": "USD"},
-        timeout=30,
-    )
-    assert summary_before.status_code == 200
-    before_data = summary_before.json()
-    
-    # Update payout amount
-    updated_payload = {
-        "store_id": isolated_store["id"],
-        "marketplace": "US",
-        "type": "payout",
-        "category": "Bankada",
-        "amount": 700.0,  # Changed from 500 to 700
-        "currency": "USD",
-        "date": payout["date"],
-        "description": "",
-        "order_id": "",
-        "payment_reference": "",
-        "product_cost": 0.0,
-        "shipping_cost": 0.0,
-        "extra_cost": 0.0,
-        "product_cost_recovery": 0.0,
-        "shipping_cost_recovery": 0.0,
-    }
-    
-    r = admin_session.put(
-        f"{base_url}/api/transactions/{payout['id']}",
-        json=updated_payload,
-        timeout=30,
-    )
-    assert r.status_code == 200, f"Payout update failed: {r.status_code} {r.text}"
-    
-    # Get summary after update
-    summary_after = admin_session.get(
-        f"{base_url}/api/dashboard/summary",
-        params={"store_id": isolated_store["id"], "marketplace": "US", "currency": "USD"},
-        timeout=30,
-    )
-    assert summary_after.status_code == 200
-    after_data = summary_after.json()
-    
-    # Verify native balance changed
-    usd_balance_before = next((b for b in before_data["native_balances"] if b["currency"] == "USD"), None)
-    usd_balance_after = next((b for b in after_data["native_balances"] if b["currency"] == "USD"), None)
-    
-    assert usd_balance_before is not None
-    assert usd_balance_after is not None
-    
-    # Payouts received should increase by 200 (700 - 500)
-    assert usd_balance_after["payouts_received"] == usd_balance_before["payouts_received"] + 200.0
-
-
-# ============================================================================
-# Test 13: Payout deletion affects summary
-# ============================================================================
-def test_payout_deletion_affects_summary(admin_session, base_url, isolated_store):
-    """Test that payout deletion affects summary correctly"""
-    # Create an income transaction
-    income = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(isolated_store["id"], amount=1000.0),
-    )
-    
-    # Create a payout
-    payout = _create_tx(
-        admin_session,
-        base_url,
-        _tx_payload(
-            isolated_store["id"],
-            type="payout",
-            category="Bankada",
-            amount=500.0,
-            order_id="",
-        ),
-    )
-    
-    # Get summary before deletion
-    summary_before = admin_session.get(
-        f"{base_url}/api/dashboard/summary",
-        params={"store_id": isolated_store["id"], "marketplace": "US", "currency": "USD"},
-        timeout=30,
-    )
-    assert summary_before.status_code == 200
-    before_data = summary_before.json()
-    
-    # Delete payout
-    r = admin_session.delete(f"{base_url}/api/transactions/{payout['id']}", timeout=30)
-    assert r.status_code == 200
-    
-    # Get summary after deletion
-    summary_after = admin_session.get(
-        f"{base_url}/api/dashboard/summary",
-        params={"store_id": isolated_store["id"], "marketplace": "US", "currency": "USD"},
-        timeout=30,
-    )
-    assert summary_after.status_code == 200
-    after_data = summary_after.json()
-    
-    # Verify native balance changed
-    usd_balance_before = next((b for b in before_data["native_balances"] if b["currency"] == "USD"), None)
-    usd_balance_after = next((b for b in after_data["native_balances"] if b["currency"] == "USD"), None)
-    
-    assert usd_balance_before is not None
-    assert usd_balance_after is not None
-    
-    # Payouts received should decrease by 500
-    assert usd_balance_after["payouts_received"] == usd_balance_before["payouts_received"] - 500.0
+    def run_all_tests(self):
+        """Run all tests"""
+        print("\n" + "="*80)
+        print("PHASE A AMAZON IMPORT RECONCILIATION - COMPREHENSIVE BACKEND TESTING")
+        print("="*80)
+        
+        if not self.setup():
+            print("\n❌ Setup failed, cannot continue")
+            return
+        
+        try:
+            self.test_1_same_file_twice()
+            self.test_2_overlapping_with_date_change()
+            self.test_3_reimport_b_again()
+            self.test_4_reimport_original_a()
+            self.test_5_import_history()
+            self.test_6_dashboard_date_filtering()
+            self.test_7_regression()
+            self.test_8_preview_mode()
+        finally:
+            self.teardown()
+        
+        # Print summary
+        print("\n" + "="*80)
+        print("TEST SUMMARY")
+        print("="*80)
+        
+        passed = sum(1 for r in self.results if r["passed"])
+        total = len(self.results)
+        
+        print(f"\nTotal: {passed}/{total} tests passed ({passed*100//total if total > 0 else 0}%)\n")
+        
+        for result in self.results:
+            status = "✅" if result["passed"] else "❌"
+            print(f"{status} {result['test']}")
+            if result["message"]:
+                print(f"   {result['message']}")
+        
+        print("\n" + "="*80)
+        
+        return passed, total
 
 
 if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+    tester = TestReconciliation()
+    passed, total = tester.run_all_tests()
+    
+    # Exit with appropriate code
+    exit(0 if passed == total else 1)

@@ -159,6 +159,16 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
   artık sunucuda sayfalı ve 500/10.000 kayıt sınırından bağımsız; sipariş adayları sunucuda gruplandırılıyor).
 - Amazon/banka gerçek ödeme kuru ile referans kur arasındaki gerçekleşmiş kur farkı takibi.
 
+## Son tamamlanan çalışma — Faz A: Amazon import idempotency + tarih koruma (2026-10-08)
+- Yeni `backend/reconciliation.py`: tarih-içermeyen stabil `event_fingerprint` (marketplace+order_id+type+sku+quantity+tutar+currency+description+satır sırası), satır sınıflandırma (new/existing_unchanged/existing_updated/date_changed/possible_duplicate/conflict), legacy backfill yardımcıları.
+- `transactions` kayıtlarına eklemeli alanlar: `original_transaction_date` (değişmez), `latest_amazon_reported_date`, `first_seen_at`, `last_seen_at`, `date_changed`. Startup'ta idempotent backfill + eski CSV kayıtlarına event fingerprint backfill.
+- `amazon_csv.py` parser'ı artık opsiyonel `sku`, `quantity`, `amazon_txn_id` alanlarını da çıkarıyor (yalnızca reconciliation için; mevcut akış değişmedi).
+- Yeni koleksiyonlar: `amazon_date_history` (tarih değişikliği denetimi), `amazon_import_batches` (audit-only import geçmişi), `amazon_orders` (Marketplace+Order ID canonical sipariş kaydı, unique index).
+- `/api/transactions/import` aynı sözleşmeyle staging/reconciliation uyguluyor: aynı dosya N kez → aynı toplamlar; örtüşen raporlarda mükerrer yok; Amazon tarihi değişirse orijinal tarih korunur, latest ayrı yazılır, history tutulur. GET `/api/transactions/import/history` ve `/api/transactions/date-history` eklendi.
+- CSV import dialogu: reconciliation özeti (yeni/değişmemiş/tarih değişimi/güncellenen/olası mükerrer/çakışma/etkilenen sipariş), tarih değişimi uyarısı, satır durum rozetleri, "Son İçe Aktarmalar" listesi. Mevcut önizleme/commit UX'i korundu.
+- Doğrulama: testing agent 25/25 backend testi geçti (TEST 1-2-3-4-6 senaryoları + finans regresyonu). MOCK yok.
+- Sıradaki fazlar: Faz B (SellerFlash yükleyici — sol menüde ayrı sayfa, .csv/.xlsx/.xls[xlrd==1.2.0]), Faz C (staging UI genişletme, Unmatched SellerFlash, cost priority, kullanıcı başına Reporting Date Mode).
+
 ## Doğrulama geçmişi
 - Önceki `/app/test_reports/iteration_1.json`: backend başarılı; UI akışlarında seçim/validasyon eksiklikleri.
 - `/app/test_reports/iteration_2.json`: backend 11/11 regresyon geçti; frontend login doğrulandı.

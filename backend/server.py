@@ -27,6 +27,13 @@ from proxy_origin import OriginAliasMiddleware
 from fx_service import FxQuote, FxError, get_rate
 from usd_ledger import attach_usd, enrich_records, summary_usd, FIELDS as USD_COST_FIELDS
 from ledger_search import search_history
+from reconciliation import (
+    STATUS_NEW, STATUS_UNCHANGED, STATUS_UPDATED, STATUS_DATE_CHANGED,
+    STATUS_POSSIBLE_DUPLICATE, STATUS_CONFLICT,
+    assign_event_fingerprints, classify_rows, legacy_date_backfill,
+    backfill_event_fingerprints,
+)
+from collections import Counter
 from company.routes import company_router
 from company.common import initialize_indexes as initialize_company_indexes
 from categories import category_router, initialize_category_indexes, resolve_category, ensure_seeded, DEFAULT_CATEGORIES
@@ -202,6 +209,10 @@ class TransactionOut(TransactionIn):
     usd_costs: dict[str, float] = Field(default_factory=dict)
     fx_status: str
     fx_error: Optional[str] = None
+    # Additive reconciliation fields (Part 3 — Amazon date preservation).
+    original_transaction_date: Optional[str] = None
+    latest_amazon_reported_date: Optional[str] = None
+    date_changed: Optional[bool] = None
 
 
 class SummaryBucket(BaseModel):
@@ -251,6 +262,50 @@ class ImportIssue(BaseModel):
     reason: str
 
 
+class ReconciliationOut(BaseModel):
+    new: int = 0
+    existing_unchanged: int = 0
+    existing_updated: int = 0
+    date_changed: int = 0
+    possible_duplicates: int = 0
+    conflicts: int = 0
+    unmatched: int = 0
+    orders_affected: int = 0
+
+
+class DateChangeOut(BaseModel):
+    order_id: str = ""
+    previous_reported_date: str
+    new_reported_date: str
+
+
+class RowClassificationOut(BaseModel):
+    order_id: str = ""
+    date: str
+    status: str
+    previous_date: Optional[str] = None
+
+
+class ImportBatchOut(BaseModel):
+    id: str
+    file_name: str = ""
+    marketplace: str = ""
+    uploaded_at: str
+    report_date_min: Optional[str] = None
+    report_date_max: Optional[str] = None
+    total_rows: int = 0
+    new: int = 0
+    existing_unchanged: int = 0
+    existing_updated: int = 0
+    date_changed: int = 0
+    possible_duplicates: int = 0
+    conflicts: int = 0
+    unmatched: int = 0
+    rejected_count: int = 0
+    inserted: int = 0
+    status: str = "completed"
+
+
 class ImportOut(BaseModel):
     accepted: int
     duplicates: int
@@ -259,6 +314,11 @@ class ImportOut(BaseModel):
     issues: List[ImportIssue]
     preview: List[TransactionOut]
     committed: bool
+    # Additive reconciliation metadata (Part 2-4); older clients ignore these.
+    reconciliation: Optional[ReconciliationOut] = None
+    date_changes: List[DateChangeOut] = Field(default_factory=list)
+    classifications: List[RowClassificationOut] = Field(default_factory=list)
+    batch_id: Optional[str] = None
 
 
 class HistoryOut(BaseModel):
@@ -685,23 +745,168 @@ async def import_csv(
     except (ValueError, UnicodeError, csv.Error) as exc:
         raise HTTPException(400, f"CSV okunamadı: {exc}")
     scope = {"user_id": user["id"], "store_id": store_id}
-    fingerprints = [d["source_fingerprint"] for d in docs]
-    existing = set(await db.transactions.distinct("source_fingerprint", {**scope, "source_fingerprint": {"$in": fingerprints}}))
-    for doc in docs:
-        doc.update(scope, id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc).isoformat(), cost_currency="USD")
+    # --- Staging / reconciliation layer (additive) ---
+    assign_event_fingerprints(docs)
+    existing_docs = await db.transactions.find(
+        {**scope, "marketplace": marketplace, "source": "amazon_payments_csv"}, {"_id": 0},
+    ).to_list(None)
+    classified = classify_rows(docs, existing_docs)
+    now = datetime.now(timezone.utc).isoformat()
+    new_docs = []
+    for item in classified:
+        doc = item["doc"]
+        doc.update(scope, id=str(uuid.uuid4()), created_at=now, cost_currency="USD",
+                   original_transaction_date=doc["date"], latest_amazon_reported_date=doc["date"],
+                   first_seen_at=now, last_seen_at=now, date_changed=False)
+        if item["status"] == STATUS_NEW:
+            new_docs.append(doc)
     try:
-        docs = await enrich_records(db, docs, persist=False, strict=True)
+        enriched_new = await enrich_records(db, new_docs, persist=False, strict=True) if new_docs else []
     except FxError as exc:
         raise HTTPException(422, str(exc))
+    enriched_iter = iter(enriched_new)
+    final_docs = []
+    for item in classified:
+        if item["status"] == STATUS_NEW:
+            final_docs.append(next(enriched_iter))
+        else:
+            final_docs.append({**item["doc"], "fx": None, "amount_usd": None,
+                               "usd_costs": {}, "fx_status": "existing", "fx_error": None})
+    counts = Counter(item["status"] for item in classified)
+    date_changes = [DateChangeOut(order_id=item["doc"].get("order_id") or "",
+                                  previous_reported_date=item["previous_date"],
+                                  new_reported_date=item["doc"]["date"])
+                    for item in classified if item["status"] == STATUS_DATE_CHANGED]
+    classifications = [RowClassificationOut(order_id=item["doc"].get("order_id") or "",
+                                            date=item["doc"]["date"], status=item["status"],
+                                            previous_date=item["previous_date"])
+                       for item in classified]
+    orders_affected = len({item["doc"].get("order_id") for item in classified
+                           if item["doc"].get("order_id")
+                           and item["status"] in (STATUS_NEW, STATUS_UPDATED, STATUS_DATE_CHANGED)})
+    reconciliation = ReconciliationOut(
+        new=counts.get(STATUS_NEW, 0),
+        existing_unchanged=counts.get(STATUS_UNCHANGED, 0),
+        existing_updated=counts.get(STATUS_UPDATED, 0),
+        date_changed=counts.get(STATUS_DATE_CHANGED, 0),
+        possible_duplicates=counts.get(STATUS_POSSIBLE_DUPLICATE, 0),
+        conflicts=counts.get(STATUS_CONFLICT, 0),
+        unmatched=0,  # reserved for SellerFlash staging stage
+        orders_affected=orders_affected,
+    )
     inserted = 0
-    if commit and docs:
-        result = await db.transactions.bulk_write([
-            UpdateOne({**scope, "source_fingerprint": d["source_fingerprint"]}, {"$setOnInsert": d}, upsert=True) for d in docs
-        ], ordered=False)
-        inserted = result.upserted_count
-    return ImportOut(accepted=len(docs), duplicates=len(docs) - inserted if commit else sum(d["source_fingerprint"] in existing for d in docs),
+    batch_id = None
+    if commit:
+        batch_id = str(uuid.uuid4())
+        # 1) Insert only brand-new events (idempotent upsert on legacy fingerprint).
+        if enriched_new:
+            result = await db.transactions.bulk_write([
+                UpdateOne({**scope, "source_fingerprint": d["source_fingerprint"]},
+                          {"$setOnInsert": {**d, "import_batch_id": batch_id}}, upsert=True)
+                for d in enriched_new
+            ], ordered=False)
+            inserted = result.upserted_count
+        # 2) Metadata-only updates for previously seen events. Financial fields and the
+        #    original date are never overwritten here.
+        for item in classified:
+            match = item["match"]
+            doc = item["doc"]
+            if not match or item["status"] in (STATUS_CONFLICT, STATUS_POSSIBLE_DUPLICATE):
+                continue
+            sets = {"last_seen_at": now, "last_import_batch_id": batch_id}
+            if not match.get("event_fingerprint"):
+                sets["event_fingerprint"] = doc["event_fingerprint"]
+            if "original_transaction_date" not in match:
+                sets["original_transaction_date"] = match["date"]
+                sets["first_seen_at"] = match.get("created_at", now)
+                sets["date_changed"] = bool(match.get("date_changed", False))
+            if doc.get("amazon_txn_id") and not match.get("amazon_txn_id"):
+                sets["amazon_txn_id"] = doc["amazon_txn_id"]
+            if item["status"] == STATUS_DATE_CHANGED:
+                sets["latest_amazon_reported_date"] = doc["date"]
+                sets["date_changed"] = True
+            elif "latest_amazon_reported_date" not in match:
+                sets["latest_amazon_reported_date"] = doc["date"]
+            if item["status"] == STATUS_UPDATED and doc.get("description"):
+                sets["description"] = doc["description"]
+            await db.transactions.update_one({"id": match["id"], "user_id": user["id"]}, {"$set": sets})
+            if item["status"] == STATUS_DATE_CHANGED:
+                await db.amazon_date_history.insert_one({
+                    "id": str(uuid.uuid4()), **scope,
+                    "order_id": doc.get("order_id") or "",
+                    "event_fingerprint": match.get("event_fingerprint") or doc["event_fingerprint"],
+                    "transaction_id": match["id"],
+                    "previous_reported_date": item["previous_date"],
+                    "new_reported_date": doc["date"],
+                    "detected_at": now,
+                    "import_batch_id": batch_id,
+                })
+        # 3) Canonical order registry (Marketplace + Amazon Order ID), additive.
+        order_keys = {(d.get("marketplace"), (d.get("order_id") or "").strip())
+                      for d in docs if (d.get("order_id") or "").strip()}
+        if order_keys:
+            await db.amazon_orders.bulk_write([
+                UpdateOne({**scope, "marketplace": mp, "order_id": oid},
+                          {"$setOnInsert": {"id": str(uuid.uuid4()), "first_seen_at": now, "created_at": now},
+                           "$set": {"last_seen_at": now, "last_import_batch_id": batch_id}},
+                          upsert=True)
+                for mp, oid in order_keys
+            ], ordered=False)
+        # 4) Audit-only import batch record.
+        report_dates = sorted(d["date"] for d in docs) if docs else []
+        await db.amazon_import_batches.insert_one({
+            "id": batch_id, **scope, "marketplace": marketplace,
+            "file_name": file.filename or "", "uploaded_at": now,
+            "report_date_min": report_dates[0] if report_dates else None,
+            "report_date_max": report_dates[-1] if report_dates else None,
+            "total_rows": len(docs),
+            "new": reconciliation.new,
+            "existing_unchanged": reconciliation.existing_unchanged,
+            "existing_updated": reconciliation.existing_updated,
+            "date_changed": reconciliation.date_changed,
+            "possible_duplicates": reconciliation.possible_duplicates,
+            "conflicts": reconciliation.conflicts,
+            "unmatched": reconciliation.unmatched,
+            "rejected_count": len(issues),
+            "inserted": inserted,
+            "status": "completed",
+        })
+    duplicates = (len(docs) - inserted) if commit else (
+        reconciliation.existing_unchanged + reconciliation.existing_updated
+        + reconciliation.date_changed + reconciliation.possible_duplicates + reconciliation.conflicts
+    )
+    return ImportOut(accepted=len(docs), duplicates=duplicates,
                      inserted=inserted, rejected_count=len(issues), issues=issues[:100],
-                     preview=[TransactionOut(**d) for d in docs[:20]], committed=commit)
+                     preview=[TransactionOut(**d) for d in final_docs[:20]], committed=commit,
+                     reconciliation=reconciliation, date_changes=date_changes[:20],
+                     classifications=classifications[:100], batch_id=batch_id)
+
+
+@api.get("/transactions/import/history", response_model=List[ImportBatchOut])
+async def amazon_import_history(
+    store_id: Optional[str] = None,
+    limit: int = 50,
+    user=Depends(get_current_user),
+):
+    """Audit-only Amazon import history; never affects financial totals."""
+    q = {"user_id": user["id"]}
+    if store_id:
+        q["store_id"] = store_id
+    docs = await db.amazon_import_batches.find(q, {"_id": 0}).sort("uploaded_at", -1).to_list(min(max(limit, 1), 200))
+    return [ImportBatchOut(**d) for d in docs]
+
+
+@api.get("/transactions/date-history")
+async def amazon_date_change_history(
+    order_id: str,
+    store_id: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Audit history of Amazon-side reported date changes for one order."""
+    q = {"user_id": user["id"], "order_id": order_id}
+    if store_id:
+        q["store_id"] = store_id
+    return await db.amazon_date_history.find(q, {"_id": 0}).sort("detected_at", 1).to_list(200)
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -740,6 +945,19 @@ async def startup():
     await db.transactions.create_index([("user_id", 1), ("store_id", 1), ("type", 1), ("date", -1)])
     await db.transactions.create_index([("user_id", 1), ("store_id", 1), ("source_fingerprint", 1)], unique=True,
                                        partialFilterExpression={"source_fingerprint": {"$type": "string"}})
+    # Reconciliation indexes (additive)
+    await db.transactions.create_index([("user_id", 1), ("store_id", 1), ("event_fingerprint", 1)])
+    await db.amazon_import_batches.create_index([("user_id", 1), ("uploaded_at", -1)])
+    await db.amazon_date_history.create_index([("user_id", 1), ("order_id", 1)])
+    await db.amazon_orders.create_index(
+        [("user_id", 1), ("store_id", 1), ("marketplace", 1), ("order_id", 1)], unique=True)
+    # Idempotent backfills: date-preservation fields + stable fingerprints for legacy rows.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.transactions.update_many(
+        {"original_transaction_date": {"$exists": False}}, legacy_date_backfill(now_iso))
+    backfilled = await backfill_event_fingerprints(db)
+    if backfilled:
+        logger.info("Backfilled event fingerprints for %s legacy Amazon rows", backfilled)
 
     # seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@amzsuite.com").lower()

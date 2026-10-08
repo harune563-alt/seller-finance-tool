@@ -95,6 +95,10 @@ def parse_amazon_csv(content, marketplace, currency):
                    "date": parse_date(row.get("date/time") or row.get("date") or row.get("posted date") or "", marketplace),
                    "order_id": row.get("order id") or "", "description": row.get("description") or "",
                    "product_cost": 0, "shipping_cost": 0, "extra_cost": 0,
+                   # Optional stable identifiers used only by reconciliation (additive).
+                   "sku": (row.get("sku") or "").strip(),
+                   "quantity": (row.get("quantity") or "").strip(),
+                   "amazon_txn_id": (row.get("transaction id") or row.get("txn id") or "").strip(),
                    "source": "amazon_payments_csv"}
             # All original row fields identify a row, including hidden SKU, without storing it.
             identity = json.dumps(row, sort_keys=True, ensure_ascii=False)

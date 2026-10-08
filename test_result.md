@@ -190,8 +190,38 @@
 ##         -working: true
 ##         -agent: "testing"
 ##         -comment: "END-TO-END BROWSER VERIFICATION COMPLETED SUCCESSFULLY. Comprehensive E2E testing at https://main-branch-dev.preview.emergentagest.com with admin@amzsuite.com credentials. ALL VERIFICATION STEPS PASSED (11/11): (1) Login successful ✅ (2) Navigated to Stores page (Mağazalar) ✅ (3) Store 'alfa' did NOT exist initially ✅ (4) Created new store with name='alfa', currency=USD, marketplace=Canada(CA) ✅ (5) Success toast 'Mağaza oluşturuldu' appeared ✅ (6) NO 'Kayıt başarısız' error message ✅ (7) Dialog closed successfully after creation ✅ (8) Store 'alfa' appeared in store list with CA flag and USD currency ✅ (9) After page reload, store 'alfa' persisted in list ✅ (10) POST /api/stores returned 200 OK (not 403) ✅ (11) NO CORS errors in browser console ✅. Network monitoring confirmed: POST /api/stores returned 200, multiple GET /api/stores returned 200. Screenshots captured: stores_page_initial.png (empty state), store_form_filled.png (form with alfa/USD/CA before submit), store_created.png (alfa store in list), store_persisted.png (alfa store after reload). User's exact reported scenario (alfa/USD/CA) now works perfectly. The CORS 403 bug is COMPLETELY RESOLVED. Store 'alfa' left in database as requested (not deleted). Bug fix VERIFIED in real browser environment."
+##   - task: "Faz A — Amazon import idempotency, orijinal tarih koruma ve import geçmişi"
+##     implemented: true
+##     working: true
+##     file: "backend/reconciliation.py, backend/amazon_csv.py, backend/server.py, frontend/src/components/transactions/CsvImport.jsx"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: false
+##     status_history:
+##         -working: NA
+##         -agent: "main"
+##         -comment: "Eklemeli reconciliation katmanı: tarih-içermeyen stabil event_fingerprint, transactions'a original_transaction_date/latest_amazon_reported_date/first_seen_at/last_seen_at/date_changed alanları (startup'ta idempotent backfill), amazon_date_history + amazon_import_batches + amazon_orders koleksiyonları, /transactions/import içinde staging sınıflandırması (new/existing_unchanged/existing_updated/date_changed/possible_duplicate/conflict), GET /transactions/import/history ve /transactions/date-history endpointleri. Mevcut endpoint imzası ve ImportOut alanları korundu (yeni alanlar opsiyonel). Ana ajan smoke testi: aynı dosya 3 kez -> inserted 0 ve toplamlar sabit; örtüşen raporda date_changed=1, orijinal tarih korundu, latest ayrı yazıldı, tarih geçmişi kaydedildi; dashboard tarih aralığı orijinal tarihi kullanıyor. Testing agent doğrulaması bekleniyor."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "PHASE A RECONCILIATION FEATURE VERIFIED SUCCESSFULLY. Comprehensive backend testing completed with 25/25 tests PASSED (100% success rate). Test file: /app/backend_test.py. ALL 8 REQUIRED TEST CASES VERIFIED: (1) SAME FILE TWICE: Imported CSV A (Order 702-TEST-0001 100.00 on 2024-10-07, Refund -20.00 on 2024-10-08) with commit=true → inserted=2, reconciliation.new=2 ✅. Second import → inserted=0, reconciliation.existing_unchanged=2, dashboard totals IDENTICAL ✅. Third import → still identical (critical financial rule verified) ✅. (2) OVERLAPPING REPORT WITH DATE CHANGE: Imported CSV B (same Order event for 702-TEST-0001 dated 2024-10-11, plus NEW order 702-TEST-0002 50.00 dated 2024-10-12) → inserted=1, reconciliation.date_changed=1 ✅. date_changes array shows 702-TEST-0001: 2024-10-07 → 2024-10-11 ✅. Transaction record verified: date=2024-10-07 (original), original_transaction_date=2024-10-07, latest_amazon_reported_date=2024-10-11, date_changed=true ✅. NO second revenue transaction created (dashboard: revenue=150, count=3) ✅. GET /api/transactions/date-history?order_id=702-TEST-0001 → exactly 1 entry with 2024-10-07 → 2024-10-11 ✅. (3) RE-IMPORT B AGAIN: → inserted=0, reconciliation.existing_unchanged=2, date history still exactly 1 entry (no duplicate history) ✅. (4) RE-IMPORT ORIGINAL A AFTER B: → inserted=0, original_transaction_date stays 2024-10-07 (no date flip-flop corruption) ✅. (5) IMPORT HISTORY: GET /api/transactions/import/history returns 6 batch records with correct structure (id, file_name, status=completed, counts: new/existing_unchanged/existing_updated/date_changed/inserted, report_date_min/max) ✅. (6) DASHBOARD DATE FILTERING: GET /api/dashboard/summary with start_date=2024-10-07&end_date=2024-10-08 includes date-changed transaction (revenue=100, count=2) - original date used for filtering ✅. (7) REGRESSION: Existing finance regression suite (/app/backend/tests/test_finance_regression.py) ALL TESTS PASSED - existing import behavior not broken ✅. (8) PREVIEW MODE: commit=false → committed=false, inserted=0, accepted=1, NO transactions written, NO batch records created ✅. All reconciliation features working correctly: idempotency verified, original date preservation verified, date change tracking verified, import history verified, dashboard filtering verified, regression tests passed, preview mode verified. Test store TEST_RECON_* created and deleted successfully. Feature is production-ready."
 ##
 ## frontend:
+##
+## frontend:
+##   - task: "CSV import reconciliation özet arayüzü (Faz A frontend)"
+##     implemented: true
+##     working: true
+##     file: "frontend/src/components/transactions/CsvImport.jsx"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: false
+##     status_history:
+##         -working: NA
+##         -agent: "main"
+##         -comment: "CSV İçe Aktar dialoguna reconciliation özet kartları (yeni/değişmemiş/tarih değişimi/güncellenen/olası mükerrer/çakışma/etkilenen sipariş), tarih değişimi uyarı listesi, satır durum rozetleri ve Son İçe Aktarmalar geçmiş listesi eklendi; mevcut önizleme/commit akışı korundu. Kullanıcı frontend E2E doğrulaması istedi."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "PHASE A CSV IMPORT RECONCILIATION UI E2E VERIFICATION COMPLETED SUCCESSFULLY. Comprehensive browser testing at https://main-branch-dev.preview.emergentagent.com with admin@amzsuite.com credentials. ALL TEST SCENARIOS PASSED (10/10): (1) EXISTING ELEMENTS INTACT: Marketplace select ✅, file input ✅, accounting note ✅, preview button ✅ - additive changes verified, no breaking changes ✅. (2) FIRST CSV IMPORT (2 new records): Reconciliation summary cards displayed correctly with csv-recon-new=2, csv-recon-unchanged=0, csv-recon-date-changed=0 ✅. Row status badges show 'Yeni' ✅. Commit button shows '2 Yeni Kaydı İçe Aktar' and enabled ✅. Commit succeeded with '2 kayıt eklendi' message ✅. (3) IDEMPOTENCY TEST (same file twice): Reconciliation shows csv-recon-new=0, csv-recon-unchanged=2 ✅. Row status badges show 'Değişmemiş' ✅. Commit button DISABLED (nothing to apply) ✅. Dashboard totals unchanged (no duplication) ✅. (4) OVERLAPPING CSV WITH DATE CHANGE: Reconciliation shows csv-recon-new=1, csv-recon-date-changed=1 ✅. Date changes warning box (data-testid='csv-date-changes') appeared with correct details '702-FE-TEST-0001: 2024-10-07 → 2024-10-11' ✅. Commit button enabled with '1 Yeni Kaydı İçe Aktar' ✅. Commit succeeded, 1 new record inserted ✅. (5) IMPORT HISTORY: 'Son İçe Aktarmalar' section (data-testid='csv-import-history') visible with 2 committed batches showing file names, dates, and reconciliation counts (yeni/tarih/aynı) ✅. (6) NO DUPLICATE ORDERS: Transactions list shows order 702-FE-TEST-0001 only once (no duplicate revenue) ✅. Dashboard totals correct ($110.03 revenue after imports) ✅. (7) RESPONSIVE DESIGN 390px: No horizontal overflow (body scroll width 390px) ✅. All form elements visible ✅. Dialog properly sized (356px) ✅. (8) RESPONSIVE DESIGN 1440px: All elements visible and properly displayed ✅. (9) NO CONSOLE ERRORS: No critical console errors ✅. No CORS errors ✅. (10) EXISTING FLOW UNCHANGED: All original UI elements present, preview/commit flow intact ✅. Feature is production-ready with full reconciliation UI working correctly."
 ##   - task: "İşlem ve Amazon ödeme düzenleme, seçim ve toplu silme arayüzü"
 ##     implemented: true
 ##     working: true
@@ -253,11 +283,10 @@
 ## metadata:
 ##   created_by: "main_agent"
 ##   version: "1.0"
-##   test_sequence: 14
+##   test_sequence: 15
 ##   run_ui: false
 ## test_plan:
-##   current_focus:
-##     - "Mağaza oluşturma yeni preview ortamında 403"
+##   current_focus: []
 ##   stuck_tasks: []
 ##   test_all: false
 ##   test_priority: "high_first"
@@ -296,6 +325,10 @@
 ##     -message: "CORS STORE CREATION BUG VERIFICATION COMPLETED: All 4 API-level tests PASSED (100%). Test file: /app/store_creation_cors_test.py. User's exact scenario (alfa/USD/CA) now works - POST /api/stores returns 200 OK, store created successfully, appears in list, no 'Kayıt başarısız' error. Security check intact - untrusted origins rejected with 403. Configuration verified correct: CORS_ORIGINS and REACT_APP_BACKEND_URL both match (https://main-branch-dev.preview.emergentagent.com). Backend logs confirm proper behavior. Bug is RESOLVED. Ready for main agent to summarize and finish."
 ##     -agent: "testing"
 ##     -message: "END-TO-END BROWSER VERIFICATION COMPLETED: Comprehensive E2E testing at https://main-branch-dev.preview.emergentagent.com with admin@amzsuite.com. ALL 11 verification steps PASSED. Store 'alfa' created successfully with USD/CA, success toast appeared, NO 'Kayıt başarısız' error, dialog closed, store appeared in list and persisted after reload. POST /api/stores returned 200 OK. NO CORS errors in console. Screenshots captured. User's exact scenario works perfectly. CORS 403 bug COMPLETELY RESOLVED in real browser. Store 'alfa' left in database as requested."
+##     -agent: "testing"
+##     -message: "PHASE A AMAZON IMPORT RECONCILIATION TESTING COMPLETED SUCCESSFULLY. Comprehensive backend testing with 25/25 tests PASSED (100%). All 8 required test cases verified: (1) Same file twice - idempotency verified, dashboard totals identical ✅ (2) Overlapping report with date change - date_changed=1, original date preserved, no duplicate revenue ✅ (3) Re-import B again - no duplicate history ✅ (4) Re-import original A after B - no date flip-flop corruption ✅ (5) Import history endpoint - batch records with correct structure ✅ (6) Dashboard date filtering - uses original date ✅ (7) Finance regression suite - all tests passed ✅ (8) Preview mode - no data written ✅. All reconciliation features working correctly: idempotency, original date preservation, date change tracking, import history, dashboard filtering. Feature is production-ready. Test file: /app/backend_test.py. Test store created and deleted successfully."
+##     -agent: "testing"
+##     -message: "PHASE A CSV IMPORT RECONCILIATION UI E2E VERIFICATION COMPLETED SUCCESSFULLY. Comprehensive browser testing at https://main-branch-dev.preview.emergentagent.com with admin@amzsuite.com. ALL 10 TEST SCENARIOS PASSED: (1) Existing elements intact - additive changes verified ✅ (2) First CSV import (2 new records) - reconciliation summary cards correct, row status badges 'Yeni', commit button enabled ✅ (3) Idempotency test - same file shows 0 new/2 unchanged, commit disabled, no duplication ✅ (4) Overlapping CSV with date change - 1 new/1 date changed detected, date warning box appeared with correct details ✅ (5) Import history section visible with committed batches ✅ (6) No duplicate orders in transactions list ✅ (7) Responsive design 390px - no overflow ✅ (8) Responsive design 1440px - all elements visible ✅ (9) No console errors ✅ (10) Existing flow unchanged ✅. Feature is production-ready."
 
 
 #====================================================================================================
