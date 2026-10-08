@@ -167,6 +167,29 @@
 ##         -working: true
 ##         -agent: "testing"
 ##         -comment: "RUNTIME RESTORATION VERIFICATION COMPLETED SUCCESSFULLY. All 11 tests PASSED (100% success rate). Test suite: /app/runtime_restoration_test.py. VERIFIED: (1) Backend service RUNNING (supervisor status confirmed) ✅ (2) MongoDB connection active with DB_NAME=amazon_seller_suite ✅ (3) All required environment variables loaded (MONGO_URL, DB_NAME, JWT_SECRET, WEBHOOK_CRON_SECRET, FRANKFURTER_BASE_URL, FX_TIMEOUT_SECONDS, CORS_ORIGINS) ✅ (4) CORS configured for preview domain (https://e87bd5b6-32a8-4479-b174-a726c56e763f.preview.emergentagent.com) ✅ (5) Frontend REACT_APP_BACKEND_URL resolves to current preview URL with /api routes accessible ✅ (6) Login authentication flow working (POST /api/auth/login returns 200, access_token cookie set) ✅ (7) Session persistence verified (GET /api/auth/me returns 200 with user data) ✅ (8) Dashboard read-only endpoint accessible (GET /api/dashboard/summary returns 200) ✅ (9) Stores read-only endpoint accessible (GET /api/stores returns 200) ✅ (10) Frankfurter v2 FX service configured correctly (TRY/USD historical quote for 2024-10-07 returns rate 0.0292, source: frankfurter-v2) ✅ (11) Backend remains RUNNING after restart ✅. Test credentials file was created with the seeded admin account for future verification. JWT_SECRET and WEBHOOK_CRON_SECRET not exposed in report as requested. All protected environment variables and services verified operational."
+##   - task: "Mağaza oluşturma yeni preview ortamında 403"
+##     implemented: true
+##     working: true
+##     file: "backend/.env, backend/server.py (check_cookie_origin middleware)"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: false
+##     status_history:
+##         -working: false
+##         -agent: "user"
+##         -comment: "Yeni Emergent hesabına aktarım sonrası giriş çalışıyor; Mağazalar > Yeni Mağaza > adı 'alfa' / USD / Canada (CA) > Oluştur sonrası form açık kalıyor ve 'Kayıt başarısız' mesajı çıkıyor."
+##         -working: NA
+##         -agent: "main"
+##         -comment: "Reproduced with authenticated session: POST /api/stores returned 403 'İzin verilmeyen istek kaynağı' from check_cookie_origin middleware because CORS_ORIGINS still listed the old UUID preview URL while the frontend actually runs on the current preview origin. Updated CORS_ORIGINS to the actual current preview origin and restarted backend; API-level repro now returns 200 and store creation plus cleanup succeeds. Browser verification pending."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "API-level verification passed 4/4: exact user scenario (alfa/USD/CA) creates store with 200; trusted origin accepted; untrusted origin still rejected with 403; CORS headers correct. Browser E2E verification requested by user next."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "CORS STORE CREATION BUG VERIFIED FIXED. Comprehensive API-level testing completed with 4/4 tests PASSED (100%). Test file: /app/store_creation_cors_test.py. VERIFIED: (1) POST /api/stores with trusted Origin (https://main-branch-dev.preview.emergentagent.com) returns 200 OK, store created successfully with all fields (name, marketplaces, currency), store appears in list, cleanup successful ✅ (2) POST /api/stores with untrusted Origin (https://evil.example.com) returns 403 Forbidden with error 'İzin verilmeyen istek kaynağı' - security check INTACT ✅ (3) Exact user flow reproduction: store 'alfa' with USD and Canada (CA) created successfully, returns 200 OK, appears in list, no 'Kayıt başarısız' error - USER'S EXACT SCENARIO NOW WORKS ✅ (4) CORS headers present in all API responses (login, stores list) ✅. Backend logs confirm: POST /api/stores with trusted origin returns 200, with untrusted origin returns 403. Configuration verified: backend/.env CORS_ORIGINS and frontend/.env REACT_APP_BACKEND_URL both set to https://main-branch-dev.preview.emergentagent.com (match confirmed). Origin guard middleware (check_cookie_origin) active and working correctly. No CORS errors in recent logs. All store operations (create, list, delete) working. Bug is RESOLVED - user can now create stores without 403 error."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "END-TO-END BROWSER VERIFICATION COMPLETED SUCCESSFULLY. Comprehensive E2E testing at https://main-branch-dev.preview.emergentagest.com with admin@amzsuite.com credentials. ALL VERIFICATION STEPS PASSED (11/11): (1) Login successful ✅ (2) Navigated to Stores page (Mağazalar) ✅ (3) Store 'alfa' did NOT exist initially ✅ (4) Created new store with name='alfa', currency=USD, marketplace=Canada(CA) ✅ (5) Success toast 'Mağaza oluşturuldu' appeared ✅ (6) NO 'Kayıt başarısız' error message ✅ (7) Dialog closed successfully after creation ✅ (8) Store 'alfa' appeared in store list with CA flag and USD currency ✅ (9) After page reload, store 'alfa' persisted in list ✅ (10) POST /api/stores returned 200 OK (not 403) ✅ (11) NO CORS errors in browser console ✅. Network monitoring confirmed: POST /api/stores returned 200, multiple GET /api/stores returned 200. Screenshots captured: stores_page_initial.png (empty state), store_form_filled.png (form with alfa/USD/CA before submit), store_created.png (alfa store in list), store_persisted.png (alfa store after reload). User's exact reported scenario (alfa/USD/CA) now works perfectly. The CORS 403 bug is COMPLETELY RESOLVED. Store 'alfa' left in database as requested (not deleted). Bug fix VERIFIED in real browser environment."
 ##
 ## frontend:
 ##   - task: "İşlem ve Amazon ödeme düzenleme, seçim ve toplu silme arayüzü"
@@ -234,7 +257,7 @@
 ##   run_ui: false
 ## test_plan:
 ##   current_focus:
-##     - "Preview frontend verification completed - all tests passed"
+##     - "Mağaza oluşturma yeni preview ortamında 403"
 ##   stuck_tasks: []
 ##   test_all: false
 ##   test_priority: "high_first"
@@ -267,6 +290,12 @@
 ##     -message: "RUNTIME RESTORATION VERIFICATION COMPLETED: All 11 backend tests PASSED (100%). Test file: /app/runtime_restoration_test.py. Backend service RUNNING, MongoDB connected (DB_NAME=amazon_seller_suite), all required env vars loaded (JWT_SECRET/WEBHOOK_CRON_SECRET not exposed), CORS configured for preview domain, frontend REACT_APP_BACKEND_URL resolves correctly with /api routes accessible, login/session/me auth flows working, dashboard/stores read-only endpoints accessible, Frankfurter v2 FX service operational (TRY/USD historical quote verified). CRITICAL NOTE: /app/memory/test_credentials.md is MISSING - used default admin credentials from server.py. All protected environment and services verified operational. Ready for main agent to summarize and finish."
 ##     -agent: "testing"
 ##     -message: "PREVIEW FRONTEND VERIFICATION COMPLETED SUCCESSFULLY. Comprehensive end-to-end browser testing at https://e87bd5b6-32a8-4479-b174-a726c56e763f.preview.emergentagent.com using admin@amzsuite.com / admin123 credentials. PASS RATE: 11/11 (100%). ALL REQUIREMENTS VERIFIED: (1) Preview loads without blank screen or build errors ✅ (2) Login succeeds ✅ (3) Authenticated dashboard loads with API requests to configured preview backend (https://main-branch-dev.preview.emergentagent.com/api) ✅ (4) Reload preserves session ✅ (5) All pages render correctly: Transactions ✅, Payouts ✅, Stores ✅, Company/Overview ✅ (6) Logout redirects to login ✅ (7) Protected route access blocked after logout ✅ (8) Browser console shows NO CORS errors, NO critical runtime errors (only expected 401s after logout and infrastructure monitoring endpoints) ✅ (9) Responsive layout verified at 390px (mobile) and 1440px (desktop) widths with no horizontal overflow ✅. CRUD UI elements verified: Transactions page shows selection checkboxes, bulk edit/delete buttons, edit dialogs. Payouts page shows selection, bulk operations. All frontend tasks marked as working. Application is fully functional and ready for production use."
+##     -agent: "main"
+##     -message: "Yeni Emergent hesabı önizlemesinde mağaza oluşturma hatası kullanıcı tarafından raporlandı (alfa/USD/CA, 'Kayıt başarısız'). API seviyesinde reproduce edildi: POST /api/stores 403 'İzin verilmeyen istek kaynağı' dönüyordu çünkü CORS_ORIGINS eski UUID preview URL'sinde kalmıştı. CORS_ORIGINS gerçek güncel frontend origin'ine güncellendi, backend yeniden başlatıldı; aynı repro artık 200 dönüyor. Kullanıcı akışının tarayıcıda doğrulanması testing agent'tan bekleniyor."
+##     -agent: "testing"
+##     -message: "CORS STORE CREATION BUG VERIFICATION COMPLETED: All 4 API-level tests PASSED (100%). Test file: /app/store_creation_cors_test.py. User's exact scenario (alfa/USD/CA) now works - POST /api/stores returns 200 OK, store created successfully, appears in list, no 'Kayıt başarısız' error. Security check intact - untrusted origins rejected with 403. Configuration verified correct: CORS_ORIGINS and REACT_APP_BACKEND_URL both match (https://main-branch-dev.preview.emergentagent.com). Backend logs confirm proper behavior. Bug is RESOLVED. Ready for main agent to summarize and finish."
+##     -agent: "testing"
+##     -message: "END-TO-END BROWSER VERIFICATION COMPLETED: Comprehensive E2E testing at https://main-branch-dev.preview.emergentagent.com with admin@amzsuite.com. ALL 11 verification steps PASSED. Store 'alfa' created successfully with USD/CA, success toast appeared, NO 'Kayıt başarısız' error, dialog closed, store appeared in list and persisted after reload. POST /api/stores returned 200 OK. NO CORS errors in console. Screenshots captured. User's exact scenario works perfectly. CORS 403 bug COMPLETELY RESOLVED in real browser. Store 'alfa' left in database as requested."
 
 
 #====================================================================================================
