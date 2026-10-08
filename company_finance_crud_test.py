@@ -13,7 +13,7 @@ import requests
 
 
 # Backend URL from environment
-BASE_URL = "https://24b47787-80b4-43f5-a735-d2fdefafd0fa.preview.emergentagent.com"
+BASE_URL = "https://main-branch-dev.preview.emergentagent.com"
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
 

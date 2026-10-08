@@ -13,7 +13,7 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL")
 TEST_EMAIL = "test_3a991703@example.com"
 TEST_PASSWORD = "testpass123"
 BAD_PASSWORD = "wrongpass123"
-ALLOWED_ORIGIN = "https://legacy-dev-2.preview.emergentagent.com"
+ALLOWED_ORIGIN = "https://main-branch-dev.preview.emergentagent.com"
 UNTRUSTED_ORIGIN = "https://evil.example.com"
 
 

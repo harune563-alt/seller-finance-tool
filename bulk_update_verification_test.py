@@ -6,7 +6,7 @@ import os
 import uuid
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://24b47787-80b4-43f5-a735-d2fdefafd0fa.preview.emergentagent.com")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://main-branch-dev.preview.emergentagent.com")
 TEST_EMAIL = "test-bulk@example.com"
 TEST_PASSWORD = "GVNlx6pt-k1LnrqTEPY0M6mt"
 
