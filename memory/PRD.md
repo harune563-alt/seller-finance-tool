@@ -241,6 +241,13 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - Doğrulama: iteration_10 ile 14/14 yeni test + 8/8 cari regresyon geçti; son idempotency/fallback düzeltmesi sonrası 14/14 test tekrar geçti. Frontend tüm akışlar ve 390/768/1440 responsive kontrolleri geçti.
 
 
+## Auth düzeltmesi — friendly preview URL CORS eksikliği (2026-10-09)
+- Kullanıcı raporu: `amazon-payments-dev.preview.emergentagent.com` (friendly alias) üzerinden giriş "Giriş başarısız" ile başarısız oluyordu.
+- Kök neden: alias origin `CORS_ORIGINS` içinde yoktu; preflight 400 dönüyor, login 200 yanıtı ACAO header'ı olmadan browser tarafından engelleniyordu (login_attempts boş = istek hiç tamamlanmamış). Admin kullanıcı ve `admin123` hash'i DB'de sağlamdı; hiçbir kullanıcı/veri değiştirilmedi.
+- Düzeltme: yalnızca `backend/.env` — `CORS_ORIGINS` artık canonical (d475802d-...) + alias (amazon-payments-dev) origin'lerini içeriyor. Kaynak kod, UI, auth/finans mantığı değişmedi.
+- Doğrulama: backend testing 14/14 (iki origin'de preflight/login/401/session, untrusted origin reddi, import history regresyonu), browser E2E 17/17 (alias'ta hatalı şifre reddi, geçerli giriş, dashboard yönlendirme, refresh sonrası session, logout, protected route yönlendirmesi, canonical URL regresyonu). Konsol/CORS temiz.
+
+
 ## Son tamamlanan çalışma — Runtime ortam restorasyonu ve doğrulama (2026-10-09, continuation)
 - Yeni container'da eksik `backend/.env`, `frontend/.env` ve `memory/test_credentials.md` yeniden oluşturuldu: MONGO_URL (local MongoDB), DB_NAME=amazon_seller_suite, güvenli üretilmiş JWT/WEBHOOK_CRON secret'ları, auth kilidi (5 deneme/900sn), Frankfurter v2, explicit CORS origin = yeni preview URL (https://d475802d-d8ad-42a5-8683-782b6f0e8c23.preview.emergentagent.com), REACT_APP_BACKEND_URL aynı URL.
 - Uygulama kaynak kodu, Amazon Payments CSV mantığı, idempotency/tarih koruma, SellerFlash maliyet import/reconciliation, auth, raporlar ve finans hesaplamaları DEĞİŞTİRİLMEDİ; hiçbir kullanıcı verisi değiştirilmedi.
