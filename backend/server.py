@@ -38,6 +38,9 @@ from company.routes import company_router
 from company.common import initialize_indexes as initialize_company_indexes
 from categories import category_router, initialize_category_indexes, resolve_category, ensure_seeded, DEFAULT_CATEGORIES
 from reporting import report_router
+from sellerflash_routes import (
+    sellerflash_router, initialize_sellerflash_indexes, backfill_amazon_orders,
+)
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -521,6 +524,9 @@ async def create_transaction(data: TransactionIn, user=Depends(get_current_user)
         "cost_currency": "USD",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    # Kullanıcı maliyet girdiyse SellerFlash bunu asla ezmez (öncelik 1).
+    if any(getattr(data, key) for key in (*COST_FIELDS, *RECOVERY_FIELDS)):
+        doc["cost_source"] = "manual"
     try:
         doc = await attach_usd(db, doc)
     except FxError as exc:
@@ -592,6 +598,8 @@ async def update_transaction(tx_id: str, data: TransactionIn, user=Depends(get_c
         "id": tx_id, "user_id": user["id"], **data.model_dump(),
         "cost_currency": "USD", "created_at": existing.get("created_at", datetime.now(timezone.utc).isoformat()),
     }
+    if any(getattr(data, key) for key in (*COST_FIELDS, *RECOVERY_FIELDS)):
+        candidate["cost_source"] = "manual"
     try:
         enriched = await attach_usd(db, candidate)
     except FxError as exc:
@@ -636,7 +644,9 @@ async def bulk_update_transactions(data: BulkChangesIn, user=Depends(get_current
             candidate["fx"] = None
             candidate.pop("amount_usd", None)
             candidate.pop("usd_costs", None)
-            if any(key in data.changes for key in (*COST_FIELDS, *RECOVERY_FIELDS)): candidate["cost_currency"] = "USD"
+            if any(key in data.changes for key in (*COST_FIELDS, *RECOVERY_FIELDS)):
+                candidate["cost_currency"] = "USD"
+                candidate["cost_source"] = "manual"
         try:
             prepared.append(await attach_usd(db, candidate))
         except FxError as exc:
@@ -671,7 +681,8 @@ async def update_transaction_costs(tx_id: str, data: CostsIn, user=Depends(get_c
         existing = await attach_usd(db, existing, persist=True)
     except FxError as exc:
         raise HTTPException(422, str(exc))
-    changes = {**data.model_dump(), "cost_currency": "USD", "usd_costs": data.model_dump()}
+    changes = {**data.model_dump(), "cost_currency": "USD", "usd_costs": data.model_dump(),
+               "cost_source": "manual"}
     if existing.get("cost_currency") != "USD" and not existing.get("original_costs"):
         changes["original_costs"] = {"currency": existing["cost_currency"], **{key: existing.get(key, 0) for key in USD_COST_FIELDS}}
     doc = await db.transactions.find_one_and_update(
@@ -914,6 +925,7 @@ async def amazon_date_change_history(
 api.include_router(company_router(db, get_current_user))
 api.include_router(category_router(db, get_current_user))
 api.include_router(report_router(db, get_current_user))
+api.include_router(sellerflash_router(db, get_current_user, MARKETPLACES))
 app.include_router(api)
 
 @app.middleware("http")
@@ -958,6 +970,11 @@ async def startup():
     backfilled = await backfill_event_fingerprints(db)
     if backfilled:
         logger.info("Backfilled event fingerprints for %s legacy Amazon rows", backfilled)
+    # SellerFlash (Faz B): indexes + canonical order registry from pre-existing rows.
+    await initialize_sellerflash_indexes(db)
+    registered_orders = await backfill_amazon_orders(db)
+    if registered_orders:
+        logger.info("Canonical order registry holds %s orders", registered_orders)
 
     # seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@amzsuite.com").lower()

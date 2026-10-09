@@ -10,6 +10,7 @@ import {
 import {
   LayoutDashboard, Receipt, Wallet, FileBarChart2, Store as StoreIcon,
   LogOut, ChevronDown, Globe, Landmark, Package, Megaphone, Settings,
+  FileSpreadsheet,
 } from "lucide-react";
 
 const nav = [
@@ -18,6 +19,7 @@ const nav = [
   { to: "/fba", label: "FBA Takibi", icon: Package, testId: "nav-fba" },
   { to: "/ppc", label: "PPC Reklam", icon: Megaphone, testId: "nav-ppc" },
   { to: "/payouts", label: "Amazon Ödemeleri", icon: Wallet, testId: "nav-payouts" },
+  { to: "/sellerflash", label: "SellerFlash İçe Aktarma", icon: FileSpreadsheet, testId: "nav-sellerflash" },
   { to: "/company", label: "Sermaye & Kasa", icon: Landmark, testId: "nav-company" },
   { to: "/report", label: "Kar-Zarar Raporu", icon: FileBarChart2, testId: "nav-report" },
   { to: "/stores", label: "Mağazalar", icon: StoreIcon, testId: "nav-stores" },

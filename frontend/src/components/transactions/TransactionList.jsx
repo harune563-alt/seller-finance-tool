@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { COST_FIELDS, RECOVERY_FIELDS, MP_BY_CODE, formatMoney } from "@/constants/marketplaces";
 import { groupOrders } from "@/lib/orderFinance";
 import { FxStatus, formatUsd } from "@/components/FxStatus";
+import { SellerFlashCostSection } from "@/components/transactions/SellerFlashCostSection";
 
 const TransactionDetail = ({ row: r, onEdit, onDelete, selected, onToggle }) => {
   const income = r.type === "income";
@@ -53,6 +54,7 @@ export const TransactionList = ({ rows, total, loading, filter, onEdit, onDelete
           </div>
           {expanded[g.id] && <div id={`order-details-${g.id}`} data-testid={`order-details-${g.id}`}>
             <div className="px-4 py-3 border-t border-slate-200 bg-white text-xs flex flex-wrap gap-4"><span>Satış maliyetleri (USD): <strong data-testid={`order-costs-${g.id}`}>{formatUsd(g.costs)}</strong></span><span className="text-emerald-700">Geri kazanımlar (USD): <strong data-testid={`order-recoveries-${g.id}`}>+{formatUsd(g.recovered)}</strong></span></div>
+            {g.orderId && <SellerFlashCostSection orderId={g.orderId} marketplace={g.marketplace} storeId={g.records[0]?.store_id} />}
             {g.records.map(r => <TransactionDetail key={r.id} row={r} onEdit={onEdit} onDelete={onDelete} selected={selectedIds.has(r.id)} onToggle={onToggle} />)}
           </div>}
         </article>;

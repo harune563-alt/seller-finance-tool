@@ -19,6 +19,7 @@ import Debts from "@/pages/company/CurrentAccounts";
 import Closings from "@/pages/company/Closings";
 import SectionLedger from "@/pages/SectionLedger";
 import CategorySettings from "@/pages/CategorySettings";
+import SellerFlashImport from "@/pages/SellerFlashImport";
 
 function App() {
   return (
@@ -34,6 +35,7 @@ function App() {
               <Route path="/fba" element={<SectionLedger section="fba" title="FBA Takibi" subtitle="FBA gelir ve giderleri" />} />
               <Route path="/ppc" element={<SectionLedger section="ppc" title="PPC Reklam Takibi" subtitle="Kampanya başına tıklama / gösterim / sipariş" />} />
               <Route path="/payouts" element={<Payouts />} />
+              <Route path="/sellerflash" element={<SellerFlashImport />} />
               <Route path="/report" element={<Report />} />
               <Route path="/stores" element={<Stores />} />
               <Route path="/settings/categories" element={<CategorySettings />} />
