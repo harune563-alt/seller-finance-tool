@@ -2,7 +2,7 @@
 """
 CORS Store Creation Bug Verification Test
 Tests the fix for user-reported bug: store creation failed with 403 after moving to new Emergent account.
-Root cause: CORS_ORIGINS had old UUID preview URL, but frontend runs at https://main-branch-dev.preview.emergentagent.com
+Root cause: CORS_ORIGINS had old UUID preview URL, but frontend runs at https://amazon-payments-dev.preview.emergentagent.com
 
 This test verifies:
 1. POST /api/stores with correct Origin returns 200 (bug is fixed)
@@ -15,12 +15,12 @@ import requests
 import pytest
 
 # Backend URL from environment
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://main-branch-dev.preview.emergentagent.com")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://amazon-payments-dev.preview.emergentagent.com")
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
 
 # The current frontend origin (should match CORS_ORIGINS in backend/.env)
-TRUSTED_ORIGIN = "https://main-branch-dev.preview.emergentagent.com"
+TRUSTED_ORIGIN = "https://amazon-payments-dev.preview.emergentagent.com"
 # An untrusted origin to test security
 UNTRUSTED_ORIGIN = "https://evil.example.com"
 

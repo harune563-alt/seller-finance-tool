@@ -239,3 +239,10 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - Cari rapor endpointleri: `/api/company/current-accounts/report/excel` ve `/pdf`; kişi, para birimi ve tarih aralığı filtreli XLSX/PDF çıktıları. PDF fontu için güvenli fallback eklendi.
 - Frontend Cari Ekstre: vade alanı, vade filtresi, toplu seçim, toplu gerçekleşti/sil, Excel/PDF indirme ve rapor filtreleri.
 - Doğrulama: iteration_10 ile 14/14 yeni test + 8/8 cari regresyon geçti; son idempotency/fallback düzeltmesi sonrası 14/14 test tekrar geçti. Frontend tüm akışlar ve 390/768/1440 responsive kontrolleri geçti.
+
+
+## Son tamamlanan çalışma — Runtime ortam restorasyonu ve doğrulama (2026-10-09, continuation)
+- Yeni container'da eksik `backend/.env`, `frontend/.env` ve `memory/test_credentials.md` yeniden oluşturuldu: MONGO_URL (local MongoDB), DB_NAME=amazon_seller_suite, güvenli üretilmiş JWT/WEBHOOK_CRON secret'ları, auth kilidi (5 deneme/900sn), Frankfurter v2, explicit CORS origin = yeni preview URL (https://d475802d-d8ad-42a5-8683-782b6f0e8c23.preview.emergentagent.com), REACT_APP_BACKEND_URL aynı URL.
+- Uygulama kaynak kodu, Amazon Payments CSV mantığı, idempotency/tarih koruma, SellerFlash maliyet import/reconciliation, auth, raporlar ve finans hesaplamaları DEĞİŞTİRİLMEDİ; hiçbir kullanıcı verisi değiştirilmedi.
+- Doğrulama: backend testing agent 18/18 test geçti (servis durumu, MongoDB 19 koleksiyon, env, CORS eşleşmesi, login/session, dashboard/stores, TRY/USD FX, Amazon CSV idempotency + tarih koruma regresyonu, SellerFlash endpoint kayıtları). Frontend testing agent 9/9 geçti (login, dashboard, navigasyon: İşlemler/Amazon Ödemeleri/Mağazalar/Sermaye & Kasa/SellerFlash sayfası, CSV İçe Aktar dialog yapısı, 390px ve 1920px taşmasız responsive, konsol/CORS temiz, session kalıcılığı, logout→login yönlendirmesi).
+- Test dosyaları: /app/continuation_runtime_test.py, /app/continuation_regression_test.py. MOCK yok. Açık sorun yok.

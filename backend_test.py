@@ -10,7 +10,7 @@ import requests
 from datetime import datetime
 
 # Backend URL from environment
-BASE_URL = "https://main-branch-dev.preview.emergentagent.com"
+BASE_URL = "https://amazon-payments-dev.preview.emergentagent.com"
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
 

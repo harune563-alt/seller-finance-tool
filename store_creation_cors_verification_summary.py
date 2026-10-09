@@ -13,7 +13,7 @@ ROOT CAUSE IDENTIFIED BY MAIN AGENT:
 - POST /api/stores returned 403 "İzin verilmeyen istek kaynağı"
 - check_cookie_origin middleware rejected requests because:
   - CORS_ORIGINS had old UUID preview URL
-  - Frontend actually runs at https://main-branch-dev.preview.emergentagent.com
+  - Frontend actually runs at https://amazon-payments-dev.preview.emergentagent.com
   - Origin header mismatch caused 403
 
 FIX APPLIED:
@@ -24,7 +24,7 @@ VERIFICATION RESULTS:
 ✅ All 4 tests PASSED (100% success rate)
 
 Test 1: Store creation with trusted origin
-- POST /api/stores with Origin: https://main-branch-dev.preview.emergentagent.com
+- POST /api/stores with Origin: https://amazon-payments-dev.preview.emergentagent.com
 - Result: 200 OK
 - Store created successfully with name, currency, marketplace
 - Store appears in list
@@ -55,8 +55,8 @@ BACKEND LOGS VERIFICATION:
 - All store operations (create, list, delete) working correctly
 
 CONFIGURATION VERIFICATION:
-- backend/.env: CORS_ORIGINS=https://main-branch-dev.preview.emergentagent.com ✅
-- frontend/.env: REACT_APP_BACKEND_URL=https://main-branch-dev.preview.emergentagent.com ✅
+- backend/.env: CORS_ORIGINS=https://amazon-payments-dev.preview.emergentagent.com ✅
+- frontend/.env: REACT_APP_BACKEND_URL=https://amazon-payments-dev.preview.emergentagent.com ✅
 - Both match - no mismatch
 
 SECURITY VERIFICATION:
