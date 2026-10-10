@@ -41,6 +41,9 @@ from reporting import report_router
 from sellerflash_routes import (
     sellerflash_router, initialize_sellerflash_indexes, backfill_amazon_orders,
 )
+from amazon_orders_import import (
+    amazon_orders_router, initialize_amazon_orders_import_indexes,
+)
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -1009,6 +1012,7 @@ api.include_router(company_router(db, get_current_user))
 api.include_router(category_router(db, get_current_user))
 api.include_router(report_router(db, get_current_user))
 api.include_router(sellerflash_router(db, get_current_user, MARKETPLACES))
+api.include_router(amazon_orders_router(db, get_current_user))
 app.include_router(api)
 
 @app.middleware("http")
@@ -1055,6 +1059,7 @@ async def startup():
         logger.info("Backfilled event fingerprints for %s legacy Amazon rows", backfilled)
     # SellerFlash (Faz B): indexes + canonical order registry from pre-existing rows.
     await initialize_sellerflash_indexes(db)
+    await initialize_amazon_orders_import_indexes(db)
     registered_orders = await backfill_amazon_orders(db)
     if registered_orders:
         logger.info("Canonical order registry holds %s orders", registered_orders)

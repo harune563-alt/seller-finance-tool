@@ -20,6 +20,7 @@ import Closings from "@/pages/company/Closings";
 import SectionLedger from "@/pages/SectionLedger";
 import CategorySettings from "@/pages/CategorySettings";
 import SellerFlashImport from "@/pages/SellerFlashImport";
+import AmazonOrdersImport from "@/pages/AmazonOrdersImport";
 
 function App() {
   return (
@@ -36,6 +37,7 @@ function App() {
               <Route path="/ppc" element={<SectionLedger section="ppc" title="PPC Reklam Takibi" subtitle="Kampanya başına tıklama / gösterim / sipariş" />} />
               <Route path="/payouts" element={<Payouts />} />
               <Route path="/sellerflash" element={<SellerFlashImport />} />
+              <Route path="/amazon-orders" element={<AmazonOrdersImport />} />
               <Route path="/report" element={<Report />} />
               <Route path="/stores" element={<Stores />} />
               <Route path="/settings/categories" element={<CategorySettings />} />
