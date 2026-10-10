@@ -267,8 +267,23 @@
 ##         -working: true
 ##         -agent: "testing"
 ##         -comment: "Preview frontend verification confirmed bulk edit UI controls are present and accessible. Transactions page shows 'Toplu Düzenle' button in selection toolbar (data-testid='bulk-edit-tx'). Payouts page shows 'Toplu Düzenle' button (data-testid='bulk-edit-payouts'). All pages navigable and render correctly. Backend bulk-update endpoints already verified working in previous tests (22/26 passed, 84.6%). Frontend bulk edit dialogs integrated and ready for user interaction. Full end-to-end bulk edit flow testing would require test data creation which was not in scope of this verification."
-##   - task: "Preview login authentication flow"
+##   - task: "Preview login authentication flow (new friendly URL CORS verification)"
 ##     implemented: true
+##     working: true
+##     file: "frontend/src/pages/Login.jsx, frontend/src/contexts/AuthContext.js, backend/.env (CORS_ORIGINS)"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: false
+##     status_history:
+##         -working: false
+##         -agent: "user"
+##         -comment: "Login page loaded fine at https://sellerfin-tool.preview.emergentagent.com, but clicking login with demo credentials (admin@amzsuite.com / admin123) returned 'login failed'. Root cause was CORS preflight 400 for the new preview origin."
+##         -working: NA
+##         -agent: "main"
+##         -comment: "CORS allowlist updated env-side to include new preview origin https://sellerfin-tool.preview.emergentagent.com. Backend restarted. Browser verification requested."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "NEW PREVIEW URL LOGIN VERIFICATION COMPLETED SUCCESSFULLY. Comprehensive E2E browser testing at https://sellerfin-tool.preview.emergentagent.com with admin@amzsuite.com/admin123 credentials. ALL 6 CRITICAL TESTS PASSED (100%): (1) Login page renders correctly with form elements ✅ (2) Login with demo credentials successful - POST /api/auth/login returns 200 ✅ (3) Success toast 'Hoş geldin!' displayed ✅ (4) Redirected to dashboard (not stuck on login page) ✅ (5) Dashboard loads with content (empty state 'İlk mağazanı oluştur' shown - correct behavior) ✅ (6) Session persistence verified - page reload maintains authentication, GET /api/auth/me returns 200 ✅ (7) NO CORS errors detected in browser console throughout entire flow ✅ (8) NO 400 preflight failures detected ✅. Console monitoring confirmed zero CORS-related errors (checked for keywords: cors, access-control, preflight, origin). Network monitoring showed all API requests successful. Only 2 benign 401 errors detected (expected from /api/auth/me calls). Screenshots captured at desktop 1920x800 showing authenticated dashboard. USER-REPORTED BUG COMPLETELY RESOLVED - the env-side CORS fix worked perfectly. Login flow fully functional at new preview URL."
 ##   - task: "TRY/USD historical FX quote for 2026-10-07"
 ##     implemented: true
 ##     working: true
@@ -446,12 +461,12 @@
 ## metadata:
 ##   created_by: "main_agent"
 ##   version: "1.0"
-##   test_sequence: 18
+##   test_sequence: 19
 ##   run_ui: false
 
 ## test_plan:
 ##   current_focus:
-##     - "Amazon Orders / Fulfillment Import page UI"
+##     - "Login CORS fix for new preview URL (https://sellerfin-tool.preview.emergentagent.com)"
 ##   stuck_tasks: []
 ##   test_all: false
 ##   test_priority: "high_first"
@@ -461,3 +476,26 @@
 ##     -message: "AMAZON ORDERS IMPORT MODULE BACKEND TESTING COMPLETED SUCCESSFULLY. All 7 required tests plus financial safety verification PASSED (8/8, 100%). Test suite: /app/amazon_orders_import_test.py. ALL REQUIREMENTS VERIFIED: (1) Amazon fulfillment → FBA ✅ (2) Merchant fulfillment → FBM ✅ (3) Idempotency - no duplicates on re-import ✅ (4) Multiple order-item-ids per order preserved ✅ (5) Active shipped row wins classification, cancelled row stored ✅ (6) Unmatched orders don't create financial transactions ✅ (7) Marketplace text differs but match succeeds by order id ✅ (8) Financial safety - transactions collection unchanged ✅. MongoDB collections properly created with correct indexes. All 4 endpoints working correctly. Test data cleaned up. Module ready for frontend verification."
 ##     -agent: "testing"
 ##     -message: "AMAZON ORDERS PAGE BROWSER VERIFICATION COMPLETED SUCCESSFULLY. All 7 verification steps PASSED (100%). Comprehensive end-to-end testing at https://5d01db41-b7e9-4610-9ea6-2c471b5d6d10.preview.emergentagent.com/amazon-orders with admin@amzsuite.com. VERIFIED: Login → navigate to Amazon Orders page ✅, page loads with no CORS/console errors ✅, all UI elements present (upload card, file input, preview button, history section) ✅, uploaded 3-row TSV file with required columns ✅, preview shows 9 summary cards with correct counts (Total: 3, Matched: 3, New: 2, Updated: 1, Unchanged: 0, Unmatched: 0, FBA: 2, FBM: 1, Mixed: 0) ✅, preview table has exactly 12 columns with badges (Action/Match/Fulfillment) ✅, commit button → success message → history updated ✅, idempotency verified (re-upload same file: New=0, Unchanged=3) ✅, responsive design verified at 390px and 1920px ✅. All API requests successful. Screenshots captured. NO UNRESOLVED ISSUES. Feature is production-ready. Ready for main agent to summarize and finish."
+
+##     -agent: "main"
+##     -message: "LOGIN BUG FIX (migration/runtime, env-only): user reported 'login failed' on current preview with admin@amzsuite.com/admin123. Root cause: platform moved preview to new friendly URL https://sellerfin-tool.preview.emergentagent.com and updated protected REACT_APP_BACKEND_URL; backend CORS_ORIGINS lacked that origin, so OPTIONS /api/auth/login preflight returned 400 and the browser blocked the login response (log evidence: repeated 'OPTIONS /api/auth/login 400 Bad Request'). Admin user EXISTS in DB with valid bcrypt hash; JWT_SECRET present; POST /api/auth/login returned 200 when reached same-origin. Minimal fix: added https://sellerfin-tool.preview.emergentagent.com to CORS_ORIGINS in backend/.env (existing origins kept); restarted backend + frontend. NO source/auth/SellerFlash/Payments/Orders code changed. Please run ONLY: one backend login test (login from sellerfin-tool origin + canonical origin, invalid-password 401, untrusted origin denied) and one browser login test at https://sellerfin-tool.preview.emergentagent.com confirming dashboard loads."
+##     -agent: "testing"
+##     -message: "CORS LOGIN VERIFICATION COMPLETED SUCCESSFULLY. All 6 tests PASSED (100% success rate). Test file: /app/cors_login_verification_test.py. VERIFIED: (1) OPTIONS preflight /api/auth/login from new origin (https://sellerfin-tool.preview.emergentagent.com) returns 200 with Access-Control-Allow-Origin matching and access-control-allow-credentials=true ✅ (2) POST /api/auth/login with valid credentials (admin@amzsuite.com/admin123) from new origin returns 200, token in body, Set-Cookie access_token with HttpOnly, Secure, SameSite=None attributes, correct ACAO header ✅ (3) GET /api/auth/me with Bearer token returns 200 with email admin@amzsuite.com ✅ (4) POST /api/auth/login with wrong password from new origin returns 401 with generic Turkish message 'E-posta veya şifre hatalı' ✅ (5) Security intact: preflight from untrusted origin (https://evil.example.com) returns 400 with no ACAO header (correctly denied) ✅ (6) Regression: login from previously configured origin (https://5d01db41-b7e9-4610-9ea6-2c471b5d6d10.preview.emergentagent.com) still works - preflight 200 with correct ACAO, login 200 with correct ACAO ✅. Cleanup: No login_attempts entries found for admin identifier (no cleanup needed). All CORS requirements verified. User-reported login bug is RESOLVED. Ready for main agent to summarize and finish."
+##     -agent: "testing"
+##     -message: "NEW PREVIEW URL LOGIN BROWSER VERIFICATION COMPLETED SUCCESSFULLY. Comprehensive E2E browser testing at https://sellerfin-tool.preview.emergentagent.com with admin@amzsuite.com/admin123 credentials. ALL 6 CRITICAL TESTS PASSED (100%): (1) Login page renders correctly with form elements ✅ (2) Login with demo credentials successful - POST /api/auth/login returns 200 ✅ (3) Success toast 'Hoş geldin!' displayed ✅ (4) Redirected to dashboard (not stuck on login page) ✅ (5) Dashboard loads with content (empty state 'İlk mağazanı oluştur' shown - correct behavior) ✅ (6) Session persistence verified - page reload maintains authentication, GET /api/auth/me returns 200 ✅ (7) NO CORS errors detected in browser console throughout entire flow ✅ (8) NO 400 preflight failures detected ✅. Console monitoring confirmed zero CORS-related errors (checked for keywords: cors, access-control, preflight, origin). Network monitoring showed all API requests successful. Only 2 benign 401 errors detected (expected from /api/auth/me calls). Screenshots captured at desktop 1920x800 showing authenticated dashboard. USER-REPORTED BUG COMPLETELY RESOLVED - the env-side CORS fix worked perfectly. Login flow fully functional at new preview URL. Ready for main agent to summarize and finish."
+
+## backend:
+##   - task: "Login CORS fix for new preview URL (https://sellerfin-tool.preview.emergentagent.com)"
+##     implemented: true
+##     working: true
+##     file: "backend/.env (CORS_ORIGINS)"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: false
+##     status_history:
+##         -working: NA
+##         -agent: "main"
+##         -comment: "Platform moved preview to new friendly URL https://sellerfin-tool.preview.emergentagent.com. Backend CORS_ORIGINS lacked that origin causing OPTIONS /api/auth/login preflight 400 errors. Added origin to CORS_ORIGINS, restarted backend. Testing requested."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "CORS LOGIN VERIFICATION COMPLETED SUCCESSFULLY. All 6 tests PASSED (100% success rate). Test file: /app/cors_login_verification_test.py. VERIFIED: (1) OPTIONS preflight /api/auth/login from new origin (https://sellerfin-tool.preview.emergentagent.com) returns 200 with Access-Control-Allow-Origin matching and access-control-allow-credentials=true ✅ (2) POST /api/auth/login with valid credentials (admin@amzsuite.com/admin123) from new origin returns 200, token in body, Set-Cookie access_token with HttpOnly, Secure, SameSite=None attributes, correct ACAO header ✅ (3) GET /api/auth/me with Bearer token returns 200 with email admin@amzsuite.com ✅ (4) POST /api/auth/login with wrong password from new origin returns 401 with generic Turkish message 'E-posta veya şifre hatalı' ✅ (5) Security intact: preflight from untrusted origin (https://evil.example.com) returns 400 with no ACAO header (correctly denied) ✅ (6) Regression: login from previously configured origin (https://5d01db41-b7e9-4610-9ea6-2c471b5d6d10.preview.emergentagent.com) still works - preflight 200 with correct ACAO, login 200 with correct ACAO ✅. Cleanup: No login_attempts entries found for admin identifier (no cleanup needed). All CORS requirements verified. User-reported login bug is RESOLVED. Ready for main agent to summarize and finish."
