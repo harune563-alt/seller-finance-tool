@@ -20,7 +20,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 from pymongo import UpdateOne
 from finance import COST_FIELDS, RECOVERY_FIELDS, CATEGORIES, money, summarize
-from amazon_csv import parse_amazon_csv
+from amazon_csv import parse_amazon_csv, CsvMappingRequired
 from auth_security import check_login_limit, record_login_failure
 from starlette.responses import JSONResponse
 from proxy_origin import OriginAliasMiddleware
@@ -169,6 +169,10 @@ class TransactionIn(CostsIn):
     description: Optional[str] = ""
     order_id: Optional[str] = ""
     payment_reference: str = Field(default="", max_length=200)
+    # Amazon CSV import fields (optional, used for reconciliation fingerprints).
+    sku: Optional[str] = Field(default="", max_length=200)
+    quantity: Optional[str] = Field(default="", max_length=50)
+    amazon_txn_id: Optional[str] = Field(default="", max_length=200)
     # Section flags the record as general / FBA / PPC for new reporting lanes.
     section: Literal["general", "fba", "ppc"] = "general"
     # PPC-specific optional metrics (filled only for PPC campaigns).
@@ -184,7 +188,7 @@ class TransactionIn(CostsIn):
     def normalize_payment_reference(cls, value):
         return value.strip() if isinstance(value, str) else value or ""
 
-    @field_validator("campaign_name", "ad_type", "asin_sku", "description", "order_id", mode="before")
+    @field_validator("campaign_name", "ad_type", "asin_sku", "description", "order_id", "sku", "quantity", "amazon_txn_id", mode="before")
     @classmethod
     def strip_optional_text(cls, value):
         if value is None:
@@ -309,6 +313,16 @@ class ImportBatchOut(BaseModel):
     status: str = "completed"
 
 
+class CsvDiagnosticsOut(BaseModel):
+    detected_headers: List[str] = Field(default_factory=list)
+    auto_mapping: dict = Field(default_factory=dict)
+    overrides_applied: dict = Field(default_factory=dict)
+    ignored_optional_columns: List[str] = Field(default_factory=list)
+    unknown_custom_columns: List[str] = Field(default_factory=list)
+    missing_required_fields: List[str] = Field(default_factory=list)
+    mappable_fields: List[str] = Field(default_factory=list)
+
+
 class ImportOut(BaseModel):
     accepted: int
     duplicates: int
@@ -322,6 +336,8 @@ class ImportOut(BaseModel):
     date_changes: List[DateChangeOut] = Field(default_factory=list)
     classifications: List[RowClassificationOut] = Field(default_factory=list)
     batch_id: Optional[str] = None
+    # Additive: parser diagnostics for the import dialog (headers, mapping, extras).
+    diagnostics: Optional[CsvDiagnosticsOut] = None
 
 
 class HistoryOut(BaseModel):
@@ -731,12 +747,16 @@ async def dashboard_summary(
     return SummaryOut(**summary_usd(enriched), currency="USD", source_currency=chosen, available_currencies=available)
 
 # ------------------ CSV Import ------------------
+from fastapi import Form as _Form
+
+
 @api.post("/transactions/import", response_model=ImportOut)
 async def import_csv(
     file: UploadFile = File(...),
     store_id: str = Query(...),
     marketplace: str = Query(...),
     commit: bool = False,
+    column_mapping: Optional[str] = _Form(None),
     user=Depends(get_current_user),
 ):
     store = await db.stores.find_one({"id": store_id, "user_id": user["id"]}, {"_id": 0})
@@ -751,16 +771,78 @@ async def import_csv(
     await file.close()
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(413, "Dosya en fazla 5 MB olabilir")
+    mapping = None
+    if column_mapping:
+        try:
+            mapping = json.loads(column_mapping)
+            if not isinstance(mapping, dict):
+                raise ValueError
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Geçersiz manuel eşleme verisi")
     try:
-        docs, issues = parse_amazon_csv(content, marketplace, MARKETPLACES[marketplace]["currency"])
+        docs, issues, diagnostics = parse_amazon_csv(
+            content, marketplace, MARKETPLACES[marketplace]["currency"], mapping,
+        )
+    except CsvMappingRequired as exc:
+        raise HTTPException(status_code=422, detail={
+            "mapping_required": True,
+            "message": str(exc),
+            "diagnostics": exc.diagnostics,
+        })
     except (ValueError, UnicodeError, csv.Error) as exc:
         raise HTTPException(400, f"CSV okunamadı: {exc}")
     scope = {"user_id": user["id"], "store_id": store_id}
     # --- Staging / reconciliation layer (additive) ---
-    assign_event_fingerprints(docs)
     existing_docs = await db.transactions.find(
         {**scope, "marketplace": marketplace, "source": "amazon_payments_csv"}, {"_id": 0},
     ).to_list(None)
+    # Edited CSVs may have dropped the optional SKU / quantity / description
+    # columns. Before we compute the stable event_fingerprint, borrow those
+    # identifiers from a uniquely matching existing record so the reconciliation
+    # still recognises the event as unchanged instead of flagging it as a
+    # possible duplicate or (for rows without order_id) inserting a copy. This
+    # never changes a financial field; it only fills blank optional metadata
+    # and relies on the existing financial identity to stay the same.
+    def _ident_key(record, include_sku_qty=False):
+        key = [
+            (record.get("marketplace") or "").strip().upper(),
+            (record.get("order_id") or "").strip(),
+            (record.get("category") or "").strip(),
+            str(money(record.get("amount", 0))),
+            (record.get("currency") or "").strip().upper(),
+        ]
+        if include_sku_qty:
+            key.append((record.get("sku") or "").strip())
+            key.append(str(record.get("quantity") or "").strip())
+        return tuple(key)
+
+    index_basic = {}
+    for existing in existing_docs:
+        index_basic.setdefault(_ident_key(existing), []).append(existing)
+    # First pass: borrow SKU + quantity when the basic financial identity is unique.
+    for doc in docs:
+        matches = index_basic.get(_ident_key(doc)) or []
+        if len(matches) != 1:
+            continue
+        candidate = matches[0]
+        if not (doc.get("sku") or "").strip() and (candidate.get("sku") or "").strip():
+            doc["sku"] = candidate["sku"]
+        if not str(doc.get("quantity") or "").strip() and str(candidate.get("quantity") or "").strip():
+            doc["quantity"] = candidate["quantity"]
+    # Second pass: borrow description when the richer identity (incl. SKU/qty) is unique.
+    index_rich = {}
+    for existing in existing_docs:
+        index_rich.setdefault(_ident_key(existing, include_sku_qty=True), []).append(existing)
+    for doc in docs:
+        if " ".join(str(doc.get("description") or "").split()):
+            continue
+        matches = index_rich.get(_ident_key(doc, include_sku_qty=True)) or []
+        if len(matches) != 1:
+            continue
+        candidate_desc = " ".join(str(matches[0].get("description") or "").split())
+        if candidate_desc:
+            doc["description"] = candidate_desc
+    assign_event_fingerprints(docs)
     classified = classify_rows(docs, existing_docs)
     now = datetime.now(timezone.utc).isoformat()
     new_docs = []
@@ -890,7 +972,8 @@ async def import_csv(
                      inserted=inserted, rejected_count=len(issues), issues=issues[:100],
                      preview=[TransactionOut(**d) for d in final_docs[:20]], committed=commit,
                      reconciliation=reconciliation, date_changes=date_changes[:20],
-                     classifications=classifications[:100], batch_id=batch_id)
+                     classifications=classifications[:100], batch_id=batch_id,
+                     diagnostics=CsvDiagnosticsOut(**diagnostics))
 
 
 @api.get("/transactions/import/history", response_model=List[ImportBatchOut])
