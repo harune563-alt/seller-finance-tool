@@ -499,3 +499,45 @@
 ##         -working: true
 ##         -agent: "testing"
 ##         -comment: "CORS LOGIN VERIFICATION COMPLETED SUCCESSFULLY. All 6 tests PASSED (100% success rate). Test file: /app/cors_login_verification_test.py. VERIFIED: (1) OPTIONS preflight /api/auth/login from new origin (https://sellerfin-tool.preview.emergentagent.com) returns 200 with Access-Control-Allow-Origin matching and access-control-allow-credentials=true ✅ (2) POST /api/auth/login with valid credentials (admin@amzsuite.com/admin123) from new origin returns 200, token in body, Set-Cookie access_token with HttpOnly, Secure, SameSite=None attributes, correct ACAO header ✅ (3) GET /api/auth/me with Bearer token returns 200 with email admin@amzsuite.com ✅ (4) POST /api/auth/login with wrong password from new origin returns 401 with generic Turkish message 'E-posta veya şifre hatalı' ✅ (5) Security intact: preflight from untrusted origin (https://evil.example.com) returns 400 with no ACAO header (correctly denied) ✅ (6) Regression: login from previously configured origin (https://5d01db41-b7e9-4610-9ea6-2c471b5d6d10.preview.emergentagent.com) still works - preflight 200 with correct ACAO, login 200 with correct ACAO ✅. Cleanup: No login_attempts entries found for admin identifier (no cleanup needed). All CORS requirements verified. User-reported login bug is RESOLVED. Ready for main agent to summarize and finish."
+
+##     -agent: "main"
+##     -message: "FULFILLMENT IMPORT ENRICHMENT FIX: user required All Orders import to enrich the EXISTING Amazon Payments financial rows for the same Amazon Order ID with fulfillment + item metadata only, never creating a second income transaction. Change (backend/amazon_orders_import.py commit step 5, metadata-only): after canonical classification, for each matched order id run db.transactions.update_many({user_id, order_id}, $set {fulfillment_type, fulfillment_last_updated_at, amazon_order_item_ids}). NO upsert/insert into transactions; amounts/dates/costs/categories/fees untouched; unmatched orders never touch transactions. Please verify MINIMUM: (1) existing income transaction from Amazon Payments import gets fulfillment_type + amazon_order_item_ids after All Orders commit, amount_usd/amount unchanged, transactions count unchanged (no new row); (2) re-import same file -> still no new transactions, metadata idempotent; (3) unmatched order id -> zero transaction writes; (4) expense rows of the same order also receive metadata; (5) classification rule still correct (cancelled qty=0 ignored)."
+
+
+## backend:
+##   - task: "Amazon Orders / Fulfillment Import metadata enrichment"
+##     implemented: true
+##     working: true
+##     file: "backend/amazon_orders_import.py, backend/server.py"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: false
+##     status_history:
+##         -working: NA
+##         -agent: "main"
+##         -comment: "Focused fix in amazon_orders_import.py lines 379-392: on commit=true, POST /api/amazon-orders/import enriches EXISTING financial transactions (collection transactions) that share the same Amazon Order ID with metadata-only $set of fulfillment_type, fulfillment_last_updated_at, amazon_order_item_ids. NEVER inserts/upserts into transactions, never touches amounts/dates/costs, never writes for unmatched orders."
+##         -working: false
+##         -agent: "testing"
+##         -comment: "CRITICAL BUG FOUND: The fix in amazon_orders_import.py was correctly writing metadata to the database (verified via backend logs showing 'Updated 1 transactions'), but the TransactionOut Pydantic model in server.py was missing the fulfillment fields (fulfillment_type, fulfillment_last_updated_at, amazon_order_item_ids), causing them to be filtered out when API returns transactions. The database writes were working, but the API responses were incomplete."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "BUG FIXED AND VERIFIED. Added missing fields to TransactionOut model in server.py lines 227-229: fulfillment_type: Optional[str] = None, fulfillment_last_updated_at: Optional[str] = None, amazon_order_item_ids: Optional[List[str]] = None. Comprehensive testing completed with 6/6 tests PASSED (100%). Test file: /app/final_fulfillment_test.py. ALL 6 MINIMUM REQUIREMENTS VERIFIED: (1) After All Orders commit for order WITH existing income transaction: transaction doc has fulfillment_type=FBA, fulfillment_last_updated_at, amazon_order_item_ids=['ITEM-ID'], while amount/amount_usd/date/type/category/all cost fields UNCHANGED, total transactions count UNCHANGED (no duplicate revenue) ✅ (2) Re-import same file (commit=true again): transactions count unchanged, no duplicate items, metadata re-written idempotently ✅ (3) All Orders row for order with NO existing transaction: unmatched, ZERO writes to transactions for that id (count unchanged) ✅ (4) Order with EXPENSE row too: both income AND expense rows receive metadata (fulfillment_type=FBM, amazon_order_item_ids, fulfillment_last_updated_at) ✅ (5) Classification integrity: order with Shipped qty=1 fulfillment-channel=Amazon + Cancelled qty=0 fulfillment-channel=Merchant → fulfillment_type=FBA on transaction (cancelled zero-qty ignored) ✅ (6) Dashboard summary totals (GET /api/dashboard/summary) identical before vs after All Orders import (revenue, expenses, net_profit, transaction_count all unchanged - financial safety verified) ✅. All metadata enrichment working correctly: update_many writes to DB successfully, TransactionOut model now includes fields, API responses complete. NO financial fields modified. NO duplicate transactions created. Feature is production-ready."
+
+## metadata:
+##   created_by: "main_agent"
+##   version: "1.0"
+##   test_sequence: 17
+##   run_ui: false
+
+## test_plan:
+##   current_focus:
+##     - "Amazon Orders / Fulfillment Import metadata enrichment"
+##   stuck_tasks: []
+##   test_all: false
+##   test_priority: "high_first"
+
+## agent_communication:
+##     -agent: "main"
+##     -message: "Focused verification requested for Amazon Orders / Fulfillment Import metadata enrichment fix in backend/amazon_orders_import.py. The fix enriches EXISTING transactions with fulfillment metadata (fulfillment_type, fulfillment_last_updated_at, amazon_order_item_ids) when importing All Orders TSV with commit=true. CRITICAL RULES: NEVER insert/upsert into transactions, NEVER touch amounts/dates/costs, ONLY write metadata for matched orders, NEVER write for unmatched orders. Testing required: 6 minimum tests covering basic enrichment, idempotency, unmatched orders, income+expense, classification integrity, and dashboard summary unchanged."
+##     -agent: "testing"
+##     -message: "AMAZON ORDERS FULFILLMENT IMPORT METADATA ENRICHMENT VERIFICATION COMPLETED SUCCESSFULLY. All 6/6 minimum tests PASSED (100%). CRITICAL BUG FOUND AND FIXED: The amazon_orders_import.py code was correctly writing metadata to MongoDB (verified via backend logs), but the TransactionOut Pydantic model in server.py was missing the fulfillment fields, causing them to be filtered out in API responses. FIX APPLIED: Added fulfillment_type, fulfillment_last_updated_at, amazon_order_item_ids to TransactionOut model (server.py lines 227-229). ALL REQUIREMENTS VERIFIED: (1) Basic metadata enrichment: transaction receives fulfillment_type=FBA, fulfillment_last_updated_at, amazon_order_item_ids, all financial fields unchanged, no duplicate transactions ✅ (2) Idempotent re-import: same file twice, count unchanged, no duplicates, metadata re-written ✅ (3) Unmatched order: order with NO transaction results in ZERO writes to transactions, count unchanged ✅ (4) Both income and expense: both transaction types receive metadata (fulfillment_type=FBM, item_ids, timestamp) ✅ (5) Classification integrity: Shipped FBA + Cancelled FBM (qty=0) → fulfillment_type=FBA (zero-qty ignored) ✅ (6) Dashboard summary unchanged: revenue, expenses, net_profit, transaction_count all identical before/after import (financial safety) ✅. Feature working correctly: metadata-only updates, no financial field modifications, no duplicate transactions, no upserts. Production-ready."

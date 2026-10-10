@@ -223,6 +223,10 @@ class TransactionOut(TransactionIn):
     original_transaction_date: Optional[str] = None
     latest_amazon_reported_date: Optional[str] = None
     date_changed: Optional[bool] = None
+    # Additive fulfillment enrichment fields (All Orders import metadata).
+    fulfillment_type: Optional[str] = None
+    fulfillment_last_updated_at: Optional[str] = None
+    amazon_order_item_ids: Optional[List[str]] = None
 
 
 class SummaryBucket(BaseModel):

@@ -376,6 +376,21 @@ def amazon_orders_router(db, get_current_user):
                     for oid in matched_oids
                 ], ordered=False)
 
+            # 5) Mevcut finansal kayıtları zenginleştir — YALNIZCA meta veri.
+            #    Aynı Amazon Order ID'ye ait var olan Income/Expense satırlarına fulfillment
+            #    ve kalem ilişkisi yazılır. Asla yeni işlem OLUŞTURULMAZ (upsert yok),
+            #    tutar/tarih/maliyet/kategori gibi finansal alanlara DOKUNULMAZ.
+            for oid in matched_oids:
+                item_ids = sorted({(it.get("order_item_id") or "") for it in merged_by_order.get(oid, [])}
+                                  - {""})
+                await db.transactions.update_many(
+                    {**scope, "order_id": oid},
+                    {"$set": {
+                        "fulfillment_type": classification.get(oid, UNKNOWN),
+                        "fulfillment_last_updated_at": now,
+                        "amazon_order_item_ids": item_ids,
+                    }})
+
             await db.amazon_order_import_batches.insert_one({
                 "id": batch_id, **scope, "file_name": file.filename or "",
                 "uploaded_at": now, "total_rows": len(rows),
