@@ -31,6 +31,7 @@ export default function Dashboard() {
   const [currency, setCurrency] = useState("");
   const [summary, setSummary] = useState(null);
   const [insights, setInsights] = useState(null);
+  const [cashflow, setCashflow] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -49,6 +50,10 @@ export default function Dashboard() {
       .then(([s, i]) => { if (current) { setSummary(s.data); setInsights(i.data); } })
       .catch(() => { if (current) setError("Özet yüklenemedi. Lütfen tekrar deneyin."); })
       .finally(() => { if (current) setLoading(false); });
+    // Nakit Akışı kartları ayrı tutulur; mevcut kâr/zarar özetine karışmaz.
+    api.get("/cashflow/summary", { params })
+      .then(r => { if (current) setCashflow(r.data); })
+      .catch(() => { if (current) setCashflow(null); });
     return () => { current = false; };
   }, [stores.length, storeScope, filters, currency]);
 
@@ -93,6 +98,22 @@ export default function Dashboard() {
         <KpiCard testId="kpi-orders" label="Toplam Sipariş" accent="emerald" icon={ShoppingCart} value={insights?.order_count ?? "—"} hint="Order ID'li siparişler" />
         <KpiCard testId="kpi-amazon-balance" label="Amazon Bakiye" accent="amazon" icon={Wallet} value={<NativeBalances summary={summary} prefix="dashboard-amazon" />} hint="Yerel para birimi · Tahmini" />
       </div>
+
+      {cashflow && (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 p-4 space-y-3" data-testid="dashboard-cashflow-section">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <h2 className="font-display text-lg font-bold text-slate-900">Nakit Akışı (Cash Flow)</h2>
+            <span className="text-xs text-slate-500">Gelir/Gider/Net Kâr kartlarından ayrıdır — gerçek nakit hareketini gösterir</span>
+            <Link to="/cashflow" className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 ml-auto" data-testid="dashboard-cashflow-link">Nakit Akışı sayfası →</Link>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" data-testid="dashboard-cashflow-cards">
+            <KpiCard testId="cf-period-in" label="Dönem Nakit Girişi" accent="emerald" icon={TrendingUp} value={formatUsd(cashflow.cash_in)} hint="Amazon tahsilatı + manuel girişler" />
+            <KpiCard testId="cf-period-out" label="Dönem Nakit Çıkışı" accent="rose" icon={TrendingDown} value={formatUsd(cashflow.cash_out)} hint="Envanter, FBM, ekstra, manuel çıkışlar" />
+            <KpiCard testId="cf-net" label="Net Nakit Akışı" accent="indigo" icon={DollarSign} value={formatUsd(cashflow.net_cash_flow)} hint="Nakit Giriş − Nakit Çıkış" />
+            <KpiCard testId="cf-capital-tied" label="Envanterdeki Sermaye" accent="amazon" icon={Boxes} value={formatUsd(cashflow.capital_tied_in_inventory)} hint="Kalan FBA stok değeri — varlık, gider değil" />
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <RevenueExpenseChart trend={trend} />

@@ -10,12 +10,13 @@ import {
 import {
   LayoutDashboard, Receipt, Wallet, FileBarChart2, Store as StoreIcon,
   LogOut, ChevronDown, Globe, Landmark, Package, Megaphone, Settings,
-  FileSpreadsheet, Truck,
+  FileSpreadsheet, Truck, ArrowLeftRight,
 } from "lucide-react";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, testId: "nav-dashboard" },
   { to: "/transactions", label: "Gelir / Gider", icon: Receipt, testId: "nav-transactions" },
+  { to: "/cashflow", label: "Nakit Akışı", icon: ArrowLeftRight, testId: "nav-cashflow" },
   { to: "/fba", label: "FBA Takibi", icon: Package, testId: "nav-fba" },
   { to: "/ppc", label: "PPC Reklam", icon: Megaphone, testId: "nav-ppc" },
   { to: "/payouts", label: "Amazon Ödemeleri", icon: Wallet, testId: "nav-payouts" },
