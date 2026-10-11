@@ -3,7 +3,7 @@ import re
 from collections import defaultdict
 from decimal import Decimal
 from finance import COST_FIELDS, RECOVERY_FIELDS
-from usd_ledger import enrich_records
+from usd_ledger import enrich_records, effective_usd_costs
 
 
 def order_key(tx):
@@ -18,10 +18,11 @@ def order_outcome(rows):
     for tx in rows:
         amount = Decimal(str(tx["amount_usd"]))
         net += amount if tx["type"] == "income" else -amount
+        costs = effective_usd_costs(tx)
         if tx["type"] == "income":
-            net -= sum(Decimal(str(tx["usd_costs"].get(k, 0))) for k in COST_FIELDS)
+            net -= sum(Decimal(str(costs.get(k, 0))) for k in COST_FIELDS)
         if tx["category"] == "Refunds":
-            net += sum(Decimal(str(tx["usd_costs"].get(k, 0))) for k in RECOVERY_FIELDS)
+            net += sum(Decimal(str(costs.get(k, 0))) for k in RECOVERY_FIELDS)
     return "profit" if net > 0 else "loss" if net < 0 else "neutral"
 
 

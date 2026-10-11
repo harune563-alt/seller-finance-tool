@@ -163,3 +163,39 @@ def test_10_refund_no_stock_increase():
     import_orders([(oid(1), "2026-01-05", "SKU-A", 2)])
     orders()
     assert {k: v["remaining_quantity"] for k, v in lots().items()} == before
+
+
+def _totals(**extra):
+    d = S.get(f"{API}/dashboard/summary", params={"store_id": ST["store"], **extra}).json()
+    p = S.get(f"{API}/portfolio/summary", params={"store_id": ST["store"], "start_date": "2026-01-01",
+                                                  "end_date": "2026-01-31", **extra}).json()
+    return d, p
+
+
+def test_11_aggregate_uses_fifo_once_everywhere():
+    # O5: manual product cost (must be ignored for FBA) + extra cost (kept)
+    r = S.post(f"{API}/transactions", json={"store_id": ST["store"], "marketplace": "US", "type": "income",
+                                            "category": "Order payments", "amount": 100, "currency": "USD",
+                                            "date": "2026-01-25", "order_id": oid(5), "product_cost": 7, "extra_cost": 2})
+    assert r.status_code == 200, r.text
+    import_orders([(oid(5), "2026-01-25", "SKU-B", 1)])
+    data = orders()
+    o5 = next(o for o in data["orders"] if o["order_id"] == oid(5))
+    assert o5["total_cost_usd"] == 6 and o5["net_profit_usd"] == 92
+    count = tx_count()
+    d1, p1 = _totals()
+    d2, p2 = _totals()
+    assert tx_count() == count and d1 == d2
+    revenue = 50 + 60 + 70 + 40 + 100
+    refunds = 50
+    fifo = 19 + 28.5 + 31.5 + 6 + 6
+    for t in (d1, p1):
+        assert t["revenue"] == revenue
+        assert round(t["expenses"], 2) == round(refunds + fifo + 2, 2)
+        assert round(t["net_profit"], 2) == round(revenue - refunds - fifo - 2, 2)
+    inv = S.get(f"{API}/fba/inventory", params={"store_id": ST["store"]}).json()["totals"]["inventory_value_usd"]
+    assert inv > 0 and round(d1["expenses"], 2) == round(refunds + fifo + 2, 2)
+    search = S.get(f"{API}/transactions/search", params={"store_id": ST["store"], "outcome": "profit", "page_size": 100}).json()
+    assert oid(5) in {t["order_id"] for t in search["items"]}
+    loss = S.get(f"{API}/transactions/search", params={"store_id": ST["store"], "outcome": "loss", "page_size": 100}).json()
+    assert {t["order_id"] for t in loss["items"]} == {oid(1)}  # 50 - 50 refund - 19 fifo < 0

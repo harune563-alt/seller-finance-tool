@@ -3,6 +3,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from finance import COST_FIELDS, RECOVERY_FIELDS, money
+from usd_ledger import effective_usd_costs
 
 def safe(value):
     if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
@@ -45,7 +46,7 @@ def build_workbook(summary, rows, stores, orders):
             payouts.append([store, tx["date"], tx.get("payment_reference", ""), tx["marketplace"], tx["currency"], tx["amount"], tx["category"], tx.get("description", "")])
             continue
         income = tx["type"] == "income"
-        costs = tx["usd_costs"]
+        costs = effective_usd_costs(tx)
         net = money(tx["amount_usd"]) * (1 if income else -1)
         if income: net -= sum(money(costs.get(key, 0)) for key in COST_FIELDS)
         if tx["category"] == "Refunds": net += sum(money(costs.get(key, 0)) for key in RECOVERY_FIELDS)

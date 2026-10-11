@@ -232,10 +232,15 @@ async def allocate_store(db, user_id, store_id):
         by_order = defaultdict(list)
         for a in allocations:
             by_order[a["amazon_order_id"]].append(a)
+
+        def carrier_id(o):
+            incomes = sorted((r for r in o["records"] if r["type"] == "income"), key=lambda r: (r["date"], r["id"]))
+            return incomes[0]["id"] if incomes else None
+
         ops = [UpdateMany({"user_id": user_id, "store_id": store_id, "marketplace": o["marketplace"],
                            "order_id": o["order_id"], "fulfillment_type": "FBA"},
                           {"$set": {"fba_fifo": {**summarize_order(o, by_order[o["order_id"]]),
-                                                 "updated_at": now_iso()}}})
+                                                 "carrier_tx_id": carrier_id(o), "updated_at": now_iso()}}})
                for o in orders]
         if ops:
             await db.transactions.bulk_write(ops, ordered=False)

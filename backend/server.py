@@ -44,7 +44,7 @@ from sellerflash_routes import (
 from amazon_orders_import import (
     amazon_orders_router, initialize_amazon_orders_import_indexes,
 )
-from fba import fba_router, initialize_fba_indexes
+from fba import fba_router, initialize_fba_indexes, allocate_user_stores
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -1069,6 +1069,8 @@ async def startup():
     await initialize_sellerflash_indexes(db)
     await initialize_amazon_orders_import_indexes(db)
     await initialize_fba_indexes(db)
+    for uid in await db.transactions.distinct("user_id", {"fulfillment_type": "FBA"}):
+        await allocate_user_stores(db, uid)
     registered_orders = await backfill_amazon_orders(db)
     if registered_orders:
         logger.info("Canonical order registry holds %s orders", registered_orders)

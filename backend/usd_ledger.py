@@ -7,6 +7,21 @@ from fx_service import FxError, get_rate
 FIELDS = [*COST_FIELDS, *RECOVERY_FIELDS]
 
 
+def effective_usd_costs(tx):
+    """Single source for P&L costs. FBA rows: SellerFlash/manual product+shipping are ignored;
+    realized FBA FIFO product+inbound is counted once, on the order's carrier row only.
+    Extra cost and recoveries stay as stored. Unsold inventory is never a cost here."""
+    costs = dict(tx.get("usd_costs") or {})
+    if tx.get("fulfillment_type") == "FBA":
+        fifo = tx.get("fba_fifo") or {}
+        carrier = bool(fifo) and fifo.get("carrier_tx_id") == tx.get("id")
+        costs["product_cost"] = fifo.get("product_cost_usd", 0) if carrier else 0
+        costs["shipping_cost"] = fifo.get("inbound_cost_usd", 0) if carrier else 0
+        # Recoveries pair with the ignored manual product/shipping costs; FBA refunds don't restock.
+        costs["product_cost_recovery"] = costs["shipping_cost_recovery"] = 0
+    return costs
+
+
 async def attach_usd(db, document, persist=False):
     doc = dict(document)
     doc.setdefault("cost_currency", doc["currency"])
@@ -54,7 +69,7 @@ def summary_usd(docs):
             bucket["amazon_balance"] -= amount
             bucket["payouts_received"] += amount
     missing = [tx for tx in docs if tx.get("fx_status") == "unavailable"]
-    converted = [{**tx, "amount": tx["amount_usd"], **tx["usd_costs"]} for tx in docs if tx.get("fx_status") != "unavailable"]
+    converted = [{**tx, "amount": tx["amount_usd"], **effective_usd_costs(tx)} for tx in docs if tx.get("fx_status") != "unavailable"]
     result = summarize(converted)
     # Local cash is never summed across currencies or adjusted by USD supplier costs.
     result.pop("amazon_balance")

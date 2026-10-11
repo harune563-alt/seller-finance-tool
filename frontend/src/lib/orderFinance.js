@@ -48,5 +48,5 @@ const withFba = g => {
   const fba = { status, amazonNet: g.incomplete ? null : amazonNetCents / 100, product: productCents / 100, inbound: inboundCents / 100,
     extra: extraCents / 100, total: totalCents / 100, net: netCents == null ? null : netCents / 100,
     margin: netCents == null || amazonNetCents === 0 ? null : netCents / amazonNetCents * 100 };
-  return { ...g, fba, costs: g.incomplete ? null : totalCents / 100, expenses: g.incomplete ? null : (g.revenueCents - amazonNetCents + totalCents) / 100, net: fba.net, margin: fba.margin };
+  return { ...g, fba, recovered: g.incomplete ? null : 0, costs: g.incomplete ? null : totalCents / 100, expenses: g.incomplete ? null : (g.revenueCents - amazonNetCents + totalCents) / 100, net: fba.net, margin: fba.margin };
 };
