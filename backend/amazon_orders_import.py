@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from pymongo import UpdateOne
 
@@ -51,7 +51,8 @@ COMPARE_FIELDS = ("sku", "asin", "quantity", "product_name", "item_status",
 
 ACTION_ATTACH = "attach"            # eşleşti + yeni kalem
 ACTION_UPDATE = "update"            # eşleşti + değişen kalem
-ACTION_NO_CHANGE = "no_change"      # eşleşti + aynı kalem
+ACTION_ENRICH = "enrich"            # eşleşti + kalem aynı AMA finansal satır zenginleştirilmemiş
+ACTION_NO_CHANGE = "no_change"      # eşleşti + kalem aynı + finansal satır zaten zenginleştirilmiş
 ACTION_UNMATCHED = "unmatched"      # canonical Amazon siparişi yok
 
 FBA = "FBA"
@@ -193,6 +194,7 @@ class OrdersImportOut(BaseModel):
     updated: int = 0
     unchanged: int = 0
     unmatched: int = 0
+    enrichment_required: int = 0
     fba_items: int = 0
     fbm_items: int = 0
     mixed_orders: int = 0
@@ -213,6 +215,7 @@ class OrdersBatchOut(BaseModel):
     updated: int = 0
     unchanged: int = 0
     unmatched: int = 0
+    enrichment_required: int = 0
     fba_items: int = 0
     fbm_items: int = 0
     mixed_orders: int = 0
@@ -225,9 +228,13 @@ def amazon_orders_router(db, get_current_user):
     @router.post("/import", response_model=OrdersImportOut)
     async def import_all_orders(
         file: UploadFile = File(...),
-        commit: bool = False,
+        commit: Optional[str] = Query(None),
+        commit_form: Optional[str] = Form(None),
         user=Depends(get_current_user),
     ):
+        # Hem query (?commit=true) hem multipart form alanı kabul edilir
+        do_commit = str(commit if commit is not None else (commit_form or "")).strip().lower() \
+            in ("1", "true", "yes", "on")
         name = (file.filename or "").lower()
         if not name.endswith((".txt", ".tsv", ".csv")):
             raise HTTPException(400, "Amazon All Orders raporu için .txt, .tsv veya .csv dosyası seçin")
@@ -243,13 +250,29 @@ def amazon_orders_router(db, get_current_user):
         scope = {"user_id": user["id"]}
         now = datetime.now(timezone.utc).isoformat()
 
-        # 1) Canonical sipariş eşleşmesi — YALNIZCA amazon-order-id (pazar yeri gerekmez)
+        # 1) Eşleşme — YALNIZCA normalize amazon-order-id, KAYNAK BAĞIMSIZ:
+        #    canonical kayıt (Amazon Payments import) VEYA mevcut Income/Expense
+        #    işlemi (manuel oluşturulmuş dahil) aynı Order ID'yi taşıyorsa Matched.
+        #    Import kaynağı, pazar yeri, SKU ve order-item-id eşleşmede KULLANILMAZ.
         order_ids = sorted({r["amazon_order_id"] for r in rows})
         canonical = await db.amazon_orders.find(
             {**scope, "order_id": {"$in": order_ids}}, {"_id": 0}).to_list(None)
         canonical_by_order = {}
         for doc in canonical:
-            canonical_by_order.setdefault(doc.get("order_id"), []).append(doc)
+            key = (doc.get("order_id") or "").strip()
+            if key:
+                canonical_by_order.setdefault(key, []).append(doc)
+
+        tx_docs = await db.transactions.find(
+            {**scope, "order_id": {"$in": order_ids}},
+            {"_id": 0, "order_id": 1, "store_id": 1, "marketplace": 1,
+             "fulfillment_type": 1, "amazon_order_item_ids": 1,
+             "fulfillment_last_updated_at": 1}).to_list(None)
+        tx_by_order = {}
+        for t in tx_docs:
+            key = (t.get("order_id") or "").strip()
+            if key:
+                tx_by_order.setdefault(key, []).append(t)
 
         # 2) Mevcut saklanan kalemler (idempotency)
         identities = [(r["amazon_order_id"], r["order_item_id"]) for r in rows]
@@ -259,8 +282,39 @@ def amazon_orders_router(db, get_current_user):
                            for d in existing_items}
         incoming_keys = set(identities)
 
+        # 3) Sipariş seviyesi sınıflandırma (mevcut + gelen kalemlerin birleşimi)
+        merged_by_order = {}
+        for doc in existing_items:
+            key = (doc.get("amazon_order_id"), doc.get("order_item_id"))
+            if key not in incoming_keys:
+                merged_by_order.setdefault(doc.get("amazon_order_id"), []).append(doc)
+        for row in rows:
+            merged_by_order.setdefault(row["amazon_order_id"], []).append(row)
+        classification = {oid: classify_order_fulfillment(items)
+                          for oid, items in merged_by_order.items()}
+
+        def _enriched(oid):
+            """Finansal zenginleştirme durumu (kalem durumundan BAĞIMSIZ):
+            mevcut Income/Expense satırları doğru fulfillment_type, tam kalem
+            ilişkisi ve zaman damgası taşıyor mu?"""
+            txs = tx_by_order.get(oid) or []
+            if not txs:
+                return True  # yazılacak finansal satır yok
+            want_items = sorted({(it.get("order_item_id") or "")
+                                 for it in merged_by_order.get(oid, [])} - {""})
+            want_type = classification.get(oid, UNKNOWN)
+            for t in txs:
+                if (t.get("fulfillment_type") or "") != want_type:
+                    return False
+                if not t.get("fulfillment_last_updated_at"):
+                    return False
+                if sorted(t.get("amazon_order_item_ids") or []) != want_items:
+                    return False
+            return True
+
         counts = {"matched": 0, "new": 0, "updated": 0, "unchanged": 0,
-                  "unmatched": 0, "fba_items": 0, "fbm_items": 0}
+                  "unmatched": 0, "fba_items": 0, "fbm_items": 0,
+                  "enrichment_required": 0}
         preview, plan = [], []
 
         for row in rows:
@@ -271,7 +325,7 @@ def amazon_orders_router(db, get_current_user):
             elif resolved == FBM:
                 counts["fbm_items"] += 1
 
-            matched = oid in canonical_by_order
+            matched = oid in canonical_by_order or oid in tx_by_order
             existing = existing_by_key.get((oid, iid))
             fp = item_fingerprint(row)
             if not matched:
@@ -281,14 +335,19 @@ def amazon_orders_router(db, get_current_user):
                 action = ACTION_ATTACH
                 counts["matched"] += 1
                 counts["new"] += 1
-            elif existing.get("item_fingerprint") == fp:
-                action = ACTION_NO_CHANGE
-                counts["matched"] += 1
-                counts["unchanged"] += 1
-            else:
+            elif existing.get("item_fingerprint") != fp:
                 action = ACTION_UPDATE
                 counts["matched"] += 1
                 counts["updated"] += 1
+            elif not _enriched(oid):
+                # Kalem meta verisi AYNI ama finansal satır henüz zenginleştirilmemiş
+                action = ACTION_ENRICH
+                counts["matched"] += 1
+                counts["enrichment_required"] += 1
+            else:
+                action = ACTION_NO_CHANGE
+                counts["matched"] += 1
+                counts["unchanged"] += 1
 
             plan.append({"row": row, "action": action, "matched": matched,
                          "existing": existing, "fingerprint": fp})
@@ -301,21 +360,14 @@ def amazon_orders_router(db, get_current_user):
                 order_status=row.get("order_status", ""), item_status=row.get("item_status", ""),
                 matched=matched, action=action))
 
-        # 3) Sipariş seviyesi sınıflandırma (önizleme: mevcut + gelen kalemlerin birleşimi)
-        merged_by_order = {}
-        for doc in existing_items:
-            key = (doc.get("amazon_order_id"), doc.get("order_item_id"))
-            if key not in incoming_keys:
-                merged_by_order.setdefault(doc.get("amazon_order_id"), []).append(doc)
-        for row in rows:
-            merged_by_order.setdefault(row["amazon_order_id"], []).append(row)
-        classification = {oid: classify_order_fulfillment(items)
-                          for oid, items in merged_by_order.items()}
-        mixed_orders = sum(1 for oid in {r["amazon_order_id"] for r in rows}
-                           if oid in canonical_by_order and classification.get(oid) == MIXED)
+        # 4) Mixed sipariş sayısı (kaynak bağımsız eşleşen siparişler üzerinden)
+        matched_order_ids = {r["amazon_order_id"] for r in rows
+                             if r["amazon_order_id"] in canonical_by_order
+                             or r["amazon_order_id"] in tx_by_order}
+        mixed_orders = sum(1 for oid in matched_order_ids if classification.get(oid) == MIXED)
 
         batch_id = None
-        if commit:
+        if do_commit:
             batch_id = str(uuid.uuid4())
             for item in plan:
                 row, action, existing = item["row"], item["action"], item["existing"]
@@ -366,8 +418,27 @@ def amazon_orders_router(db, get_current_user):
                             "changes": changes, "detected_at": now,
                             "import_batch_id": batch_id})
 
-            # 4) Canonical siparişlere fulfillment sınıflandırması yaz (finansal alanlara DOKUNULMAZ)
+            # 5) Kaynak bağımsız eşleşen siparişler için canonical kayıt tamamlama
+            #    (manuel Income/Expense işlemleri dahil; finansal alan İÇERMEZ)
             matched_oids = sorted({item["row"]["amazon_order_id"] for item in plan if item["matched"]})
+            registry_ops = []
+            for oid in matched_oids:
+                if oid in canonical_by_order:
+                    continue
+                for t in (tx_by_order.get(oid) or []):
+                    if not t.get("store_id") or not t.get("marketplace"):
+                        continue
+                    registry_ops.append(UpdateOne(
+                        {**scope, "store_id": t["store_id"], "marketplace": t["marketplace"],
+                         "order_id": oid},
+                        {"$setOnInsert": {"id": str(uuid.uuid4()), "first_seen_at": now,
+                                          "created_at": now},
+                         "$set": {"last_seen_at": now, "last_import_batch_id": batch_id}},
+                        upsert=True))
+            if registry_ops:
+                await db.amazon_orders.bulk_write(registry_ops, ordered=False)
+
+            # 6) Canonical siparişlere fulfillment sınıflandırması yaz (finansal alanlara DOKUNULMAZ)
             if matched_oids:
                 await db.amazon_orders.bulk_write([
                     UpdateOne({**scope, "order_id": oid},
@@ -376,7 +447,7 @@ def amazon_orders_router(db, get_current_user):
                     for oid in matched_oids
                 ], ordered=False)
 
-            # 5) Mevcut finansal kayıtları zenginleştir — YALNIZCA meta veri.
+            # 7) Mevcut finansal kayıtları zenginleştir — YALNIZCA meta veri.
             #    Aynı Amazon Order ID'ye ait var olan Income/Expense satırlarına fulfillment
             #    ve kalem ilişkisi yazılır. Asla yeni işlem OLUŞTURULMAZ (upsert yok),
             #    tutar/tarih/maliyet/kategori gibi finansal alanlara DOKUNULMAZ.
@@ -397,6 +468,7 @@ def amazon_orders_router(db, get_current_user):
                 "matched": counts["matched"], "new": counts["new"],
                 "updated": counts["updated"], "unchanged": counts["unchanged"],
                 "unmatched": counts["unmatched"],
+                "enrichment_required": counts["enrichment_required"],
                 "fba_items": counts["fba_items"], "fbm_items": counts["fbm_items"],
                 "mixed_orders": mixed_orders, "rejected_count": len(issues),
                 "status": "completed",
@@ -406,9 +478,10 @@ def amazon_orders_router(db, get_current_user):
             total_rows=len(rows), matched=counts["matched"], new=counts["new"],
             updated=counts["updated"], unchanged=counts["unchanged"],
             unmatched=counts["unmatched"],
+            enrichment_required=counts["enrichment_required"],
             fba_items=counts["fba_items"], fbm_items=counts["fbm_items"],
             mixed_orders=mixed_orders, rejected_count=len(issues), issues=issues[:100],
-            preview=preview[:500], committed=commit, batch_id=batch_id)
+            preview=preview[:500], committed=do_commit, batch_id=batch_id)
 
     @router.get("/history", response_model=List[OrdersBatchOut])
     async def orders_import_history(limit: int = 50, user=Depends(get_current_user)):

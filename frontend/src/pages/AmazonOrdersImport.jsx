@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 const ACTION_LABELS = {
   attach: { text: "Attach", cls: "bg-emerald-100 text-emerald-800" },
   update: { text: "Update", cls: "bg-sky-100 text-sky-800" },
+  enrich: { text: "Attach / Enrich", cls: "bg-indigo-100 text-indigo-800" },
   no_change: { text: "No Change", cls: "bg-slate-100 text-slate-600" },
   unmatched: { text: "Unmatched", cls: "bg-orange-100 text-orange-800" },
 };
@@ -64,7 +65,7 @@ export default function AmazonOrdersImport() {
       const { data } = await api.post("/amazon-orders/import", body, { params: { commit } });
       setResult(data);
       if (commit) {
-        toast.success(`${data.new} yeni kalem, ${data.updated} güncelleme · ${data.unmatched} eşleşmeyen`);
+        toast.success(`${data.new} yeni kalem, ${data.updated} güncelleme, ${data.enrichment_required || 0} finansal zenginleştirme · ${data.unmatched} eşleşmeyen`);
         refreshLists();
       }
     } catch (err) {
@@ -73,7 +74,7 @@ export default function AmazonOrdersImport() {
     } finally { setBusy(false); }
   };
 
-  const applicable = result ? result.new + result.updated : 0;
+  const applicable = result ? result.new + result.updated + (result.enrichment_required || 0) : 0;
 
   return <div className="space-y-6" data-testid="amazon-orders-page">
     <div>
@@ -108,11 +109,12 @@ export default function AmazonOrdersImport() {
       {error && <p role="alert" data-testid="ao-error" className="text-sm text-rose-700">{error}</p>}
 
       {result && <div className="space-y-4" data-testid="ao-result">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2 text-xs" data-testid="ao-counts">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-10 gap-2 text-xs" data-testid="ao-counts">
           <div className="rounded-lg bg-slate-50 border px-2 py-1.5"><span className="block font-semibold text-slate-800" data-testid="ao-count-total">{result.total_rows}</span>Total Rows</div>
           <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-2 py-1.5"><span className="block font-semibold text-emerald-800" data-testid="ao-count-matched">{result.matched}</span>Matched</div>
           <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-2 py-1.5"><span className="block font-semibold text-emerald-800" data-testid="ao-count-new">{result.new}</span>New</div>
           <div className="rounded-lg bg-sky-50 border border-sky-200 px-2 py-1.5"><span className="block font-semibold text-sky-800" data-testid="ao-count-updated">{result.updated}</span>Updated</div>
+          <div className="rounded-lg bg-indigo-50 border border-indigo-200 px-2 py-1.5"><span className="block font-semibold text-indigo-800" data-testid="ao-count-enrich">{result.enrichment_required || 0}</span>Enrichment Required</div>
           <div className="rounded-lg bg-slate-50 border px-2 py-1.5"><span className="block font-semibold text-slate-700" data-testid="ao-count-unchanged">{result.unchanged}</span>Unchanged</div>
           <div className="rounded-lg bg-orange-50 border border-orange-200 px-2 py-1.5"><span className="block font-semibold text-orange-800" data-testid="ao-count-unmatched">{result.unmatched}</span>Unmatched</div>
           <div className="rounded-lg bg-blue-50 border border-blue-200 px-2 py-1.5"><span className="block font-semibold text-blue-800" data-testid="ao-count-fba">{result.fba_items}</span>FBA Items</div>
@@ -120,7 +122,7 @@ export default function AmazonOrdersImport() {
           <div className="rounded-lg bg-amber-50 border border-amber-200 px-2 py-1.5"><span className="block font-semibold text-amber-800" data-testid="ao-count-mixed">{result.mixed_orders}</span>Mixed Orders</div>
         </div>
         {result.committed && <p className="text-sm font-semibold text-emerald-700" data-testid="ao-import-success">
-          İçe aktarma tamamlandı: {result.new} yeni · {result.updated} güncelleme · {result.unchanged} aynı · {result.unmatched} eşleşmeyen
+          İçe aktarma tamamlandı: {result.new} yeni · {result.updated} güncelleme · {result.enrichment_required || 0} finansal zenginleştirme · {result.unchanged} aynı · {result.unmatched} eşleşmeyen
         </p>}
         {result.issues.length > 0 && <div className="text-xs text-amber-800 bg-amber-50 rounded-md p-3 max-h-32 overflow-y-auto" data-testid="ao-issues">
           {result.issues.map((issue, i) => <p key={i}>Satır {issue.line}: {issue.reason}</p>)}
