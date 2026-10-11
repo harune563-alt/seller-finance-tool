@@ -177,7 +177,11 @@ class TestFbaDeleteScenario:
         # cleanup
         session.delete(f"{BASE_URL}/api/fba/lots/{lot_id}", timeout=30)
 
-    def test_03_partial_order_keeps_alloc_until_last_tx(self, session, store):
+    def test_03_partial_order_reverses_when_no_fba_tx_remains(self, session, store):
+        """NEW RULE (iteration 14): reversal fires as soon as NO remaining tx with
+        fulfillment_type='FBA' exists for the order — even if a non-FBA expense
+        still shares the order_id. Then the non-FBA expense delete is a no-op
+        with reversed_allocations=0 and must not error."""
         sid = store["id"]
         lot = _create_lot(session, sid, sku="TEST-SKU-PART")
         lot_id = lot["id"]
@@ -186,7 +190,8 @@ class TestFbaDeleteScenario:
         income_tx_id = sale["transaction_id"]
         order_id = sale["order_id"]
 
-        # Add second expense tx with SAME order_id
+        # Add non-FBA expense sharing the same order_id (TransactionIn has no
+        # fulfillment_type field, so this row is NOT FBA-fulfilled)
         r = session.post(f"{BASE_URL}/api/transactions", json={
             "store_id": sid, "marketplace": "US", "type": "expense",
             "category": "Service Fees", "amount": 1, "currency": "USD",
@@ -195,36 +200,53 @@ class TestFbaDeleteScenario:
         assert r.status_code in (200, 201), f"create expense {r.status_code} {r.text}"
         expense_tx_id = r.json()["id"]
 
-        # Delete ONLY the income tx -> allocation should stay (order still has expense)
+        # Delete the income (sole FBA-fulfillment tx). Under the new rule the
+        # order has no remaining FBA tx -> allocations should reverse now.
         r = session.delete(f"{BASE_URL}/api/transactions/{income_tx_id}", timeout=30)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body.get("reversed_allocations", 0) == 0, f"allocation should not reverse yet: {body}"
+        assert body.get("reversed_allocations", 0) >= 1, (
+            f"expected reversal on last FBA tx delete: {body}")
 
         got = _get_lot(session, sid, lot_id)
-        assert got["remaining_quantity"] == 0, f"lot should still be depleted: {got}"
+        assert got["remaining_quantity"] == 1, f"lot should be restored now: {got}"
+        assert got["consumed_quantity"] == 0, got
+        assert got["lot_status"] == "OPEN", got
 
-        # allocation still active
         r = session.get(f"{BASE_URL}/api/fba/lots/{lot_id}/history", timeout=30)
         order_allocs = [a for a in r.json()["allocations"] if a.get("amazon_order_id") == order_id]
-        assert order_allocs and all(a["status"] == "active" for a in order_allocs), order_allocs
+        assert order_allocs and all(a["status"] == "reversed" for a in order_allocs), order_allocs
 
-        # Delete the expense -> allocation reverses
+        # Delete the leftover non-FBA expense: no allocations remain for the
+        # order, so this must be a clean no-op (reversed_allocations == 0).
         r = session.delete(f"{BASE_URL}/api/transactions/{expense_tx_id}", timeout=30)
         assert r.status_code == 200, r.text
         body = r.json()
-        # NOTE: expense tx may not have fulfillment_type="FBA" so cleanup might skip
-        # — the fix should detect order_id has no remaining txs regardless.
-        print(f"DEBUG expense delete body: {body}")
+        assert body.get("reversed_allocations", 0) == 0, (
+            f"second delete should be a no-op: {body}")
 
         got = _get_lot(session, sid, lot_id)
-        print(f"DEBUG lot after expense delete: remaining={got['remaining_quantity']} status={got['lot_status']}")
-        assert got["remaining_quantity"] == 1, f"lot should be restored: {got}"
-        assert got["lot_status"] == "OPEN"
-
-        r = session.get(f"{BASE_URL}/api/fba/lots/{lot_id}/history", timeout=30)
-        order_allocs = [a for a in r.json()["allocations"] if a.get("amazon_order_id") == order_id]
-        assert all(a["status"] == "reversed" for a in order_allocs), order_allocs
+        assert got["remaining_quantity"] == 1, got
+        assert got["lot_status"] == "OPEN", got
 
         # cleanup
         session.delete(f"{BASE_URL}/api/fba/lots/{lot_id}", timeout=30)
+
+    def test_04_non_fba_order_delete_is_noop(self, session, store):
+        """Sanity: a plain manual income with an order_id but no FBA
+        fulfillment / allocations must delete cleanly with reversed_allocations=0."""
+        sid = store["id"]
+        order_id = f"TEST-NONFBA-{uuid.uuid4().hex[:8].upper()}"
+        r = session.post(f"{BASE_URL}/api/transactions", json={
+            "store_id": sid, "marketplace": "US", "type": "expense",
+            "category": "Service Fees", "amount": 5, "currency": "USD",
+            "date": TODAY, "order_id": order_id,
+        }, timeout=30)
+        assert r.status_code in (200, 201), f"create {r.status_code} {r.text}"
+        tx_id = r.json()["id"]
+
+        r = session.delete(f"{BASE_URL}/api/transactions/{tx_id}", timeout=30)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("reversed_allocations", 0) == 0, body
+        assert body.get("ok") is True

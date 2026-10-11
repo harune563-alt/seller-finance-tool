@@ -35,6 +35,14 @@ Import and run existing project from GitHub (repo: harune563-alt/seller-finance-
 - Amazon Payments CSV: normalized type matching, advertising keywords → category "Advertising" / classification PPC_ADVERTISING_EXPENSE, raw_transaction_type kept, no Order ID needed; unknown types → diagnostics.review_required (not booked, rest of file continues)
 - Focused tests: backend/tests/test_ppc_unified.py 8/8 pass
 
+## FBA Deletion Consistency Fix (2026-10-11)
+- Root cause: DELETE /api/transactions/{id} and bulk-delete removed transactions but never reversed FIFO allocations → lots stayed depleted, Manual FBA Sale saw insufficient stock after order disappeared
+- fba.py: reverse_fba_order (restores quantities to original lots, marks allocations reversed, audits) + cleanup_deleted_fba_sales (reverses when no FBA-fulfillment tx remains on the order); reallocate_order refactored to reuse it
+- server.py: single + bulk transaction delete now trigger cleanup for any deleted row with an order_id
+- New DELETE /api/fba/lots/{lot_id}: 409 "Bu lot aktif FBA satışlarında kullanılıyor..." when active allocations exist; deletes normally otherwise
+- Cash flow purchase/inbound records untouched; lots never auto-deleted on sale deletion
+- Tests: iteration_14 4/4 pass (main scenario, partial-order, lot guard, bulk delete)
+
 ## Backlog
 - P0: none — ready for next development task
 - P1/P2: per user's next feature requests

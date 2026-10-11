@@ -1,0 +1,29 @@
+{
+  "summary": "Re-verified FBA deletion consistency fix (iteration 13 follow-up). Updated test_03 to match the NEW rule (reversal fires as soon as no remaining tx with fulfillment_type='FBA' exists for the order, even if a non-FBA expense still shares the order_id) and added test_04 as a sanity check for non-FBA order deletes. All 4 pytest cases PASS against the preview URL. The previously failing partial-order scenario is now green.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_fba_delete_scenario.py",
+    "/app/test_reports/pytest/fba_delete_scenario_iter14.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L658 (bulk-delete) and L742 (single delete) now correctly collect refs for ANY deleted doc with an order_id — fulfillment_type filter removed. Fix is minimal and localized.",
+    "fba.py cleanup_deleted_fba_sales keeps a count_documents({..., fulfillment_type:'FBA'}) guard, so lingering non-FBA rows (expense fees) no longer keep the FIFO allocation alive. Reversal is still gated on `remaining==0 FBA txs`, which is the intended new semantics.",
+    "Minor: delete_transaction returns reversed_allocations even for pure non-FBA deletes (always 0) — consistent and documented via test_04.",
+    "No regressions observed in the 4 tested flows (single-delete, bulk-delete, partial-order, non-FBA order delete)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fba_delete_scenario.py (rewrote test_03 for new rule, added test_04 non-FBA sanity)"
+  ],
+  "success_rate": {"backend": "100% (4/4)", "frontend": "not tested (backend-only task)"},
+  "test_credentials": "admin@amzsuite.com / admin123",
+  "seed_data_creation": "Each run creates isolated TEST_FBA_DEL_<rand> stores and TEST-SKU-* lots; stores are deleted on teardown. Real 'ng' store untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "FBA delete/cleanup regression lives in /app/backend/tests/test_fba_delete_scenario.py. Semantics as of iter14: reversal fires when zero remaining txs with fulfillment_type=='FBA' exist for (store_id, order_id), regardless of whether the deleted doc itself was FBA. lot_status values: OPEN/DEPLETED/CLOSED (uppercase). allocation status: active/reversed. Run with: `env REACT_APP_BACKEND_URL=... python -m pytest backend/tests/test_fba_delete_scenario.py -v -o addopts=`",
+  "rca of the issue": "Iteration 13 failure root cause (now FIXED in server.py): refs for cleanup_deleted_fba_sales were filtered by fulfillment_type=='FBA'. Non-FBA expense rows (added via POST /api/transactions, which has no fulfillment_type field) sharing the same order_id never contributed to refs, so reversal was never attempted. Fix drops the filter; cleanup_deleted_fba_sales itself does the authoritative 'any FBA tx still on this order?' check. Verified: deleting the sole FBA sale on a partial order now correctly reverses the allocation and restores the lot (test_03). Deleting the leftover non-FBA expense afterwards is a no-op (reversed_allocations=0, 200 OK) — test_04 confirms."
+}
