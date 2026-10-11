@@ -347,14 +347,32 @@
 ##         -agent: "testing"
 ##         -comment: "BROWSER E2E VERIFICATION COMPLETED SUCCESSFULLY. Comprehensive end-to-end browser testing with Playwright at BOTH URLs as explicitly requested by user. PASS RATE: 17/17 tests (100%). Test credentials: admin@amzsuite.com / admin123. ALIAS URL (https://amazon-payments-dev.preview.emergentagent.com) - ALL 10 TESTS PASSED: (1) Login page renders correctly ✅ (2) Invalid password first (admin@amzsuite.com with wrong password) → error toast 'E-posta veya şifre hatalı' displayed, POST /api/auth/login returned 401, still on login page (NOT logged in) ✅ (3) Valid login (admin@amzsuite.com / admin123) → success toast 'Hoş geldin!' displayed, redirected to dashboard, POST /api/auth/login returned 200, NO CORS errors in console ✅ (4) Dashboard content loaded correctly (empty state 'İlk mağazanı oluştur' shown - correct behavior) ✅ (5) Session persistence: page reload maintained authentication, GET /api/auth/me returned 200, dashboard content still visible ✅ (6) Logout: clicked user menu (data-testid='user-menu-btn'), clicked logout (data-testid='logout-btn'), redirected to login page ✅ (7) Protected route redirect: after logout, navigating to /transactions redirected back to /login (auth guard working) ✅ (8) Re-login successful to leave session authenticated ✅ (9) NO CORS errors detected in browser console throughout entire flow ✅ (10) NO critical runtime errors in console ✅. CANONICAL URL (https://d475802d-d8ad-42a5-8683-782b6f0e8c23.preview.emergentagent.com) - ALL 7 REGRESSION TESTS PASSED: (1) Login successful, POST /api/auth/login returned 200 ✅ (2) Dashboard loaded ✅ (3) Session persistence after reload ✅ (4) Logout successful ✅ (5) Re-login successful ✅ (6) NO CORS errors ✅ (7) NO critical errors ✅. SCREENSHOTS CAPTURED: Desktop 1920x800 (alias_dashboard_desktop.png) and Mobile 390x844 (alias_dashboard_mobile.png) showing authenticated dashboard at alias URL. Console monitoring: tracked all network requests, no CORS errors ('cors' or 'access-control' keywords not found in console logs), no 400 preflight failures, all /api/auth/login requests returned expected status codes (401 for invalid, 200 for valid). USER-REPORTED BUG COMPLETELY RESOLVED: Login at friendly alias URL now works perfectly with no 'Giriş başarısız' CORS errors. Both URLs (alias and canonical) fully functional. Auth flow working end-to-end in real browser environment."
 ##
+##   - task: "Login bug fix verification (frontend env reload)"
+##     implemented: true
+##     working: true
+##     file: "frontend/.env, supervisor frontend service"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: false
+##     status_history:
+##         -working: false
+##         -agent: "user"
+##         -comment: "Login page loads at https://136d1416-b1fc-44ae-8449-4020b51cacfc.preview.emergentagent.com but login with admin@amzsuite.com / admin123 returns failure. Root cause: frontend dev server started before frontend/.env existed, so API calls went to 'undefined/api/...' instead of correct backend URL."
+##         -working: NA
+##         -agent: "main"
+##         -comment: "Minimal fix applied: frontend service restarted to load frontend/.env with REACT_APP_BACKEND_URL. Backend already verified: POST /api/auth/login returns 200 with correct CORS and HttpOnly cookie. Browser verification requested."
+##         -working: true
+##         -agent: "testing"
+##         -comment: "LOGIN BUG FIX VERIFIED SUCCESSFULLY. Comprehensive browser E2E testing at https://136d1416-b1fc-44ae-8449-4020b51cacfc.preview.emergentagent.com with admin@amzsuite.com/admin123 credentials. ALL 10 VERIFICATION ITEMS PASSED (100%): (1) Login page renders correctly with Turkish UI ('Giriş', 'E-posta' detected) ✅ (2) Login form accepts credentials (email and password filled successfully) ✅ (3) Login submission successful (button clicked, form submitted) ✅ (4) NO 'Giriş başarısız' error toast detected ✅ (5) Redirected to dashboard (URL changed from /login to /) ✅ (6) Dashboard loads with content - empty state 'İlk mağazanı oluştur' displayed (correct behavior when no stores exist) ✅ (7) POST /api/auth/login used CORRECT backend URL: https://136d1416-b1fc-44ae-8449-4020b51cacfc.preview.emergentagent.com/api/auth/login (NOT 'undefined/api/...') ✅ (8) POST /api/auth/login returned 200 OK ✅ (9) Response headers include correct Access-Control-Allow-Origin and access-control-allow-credentials=true ✅ (10) NO CORS errors detected in browser console ✅. Network monitoring confirmed: 2 login-related requests captured (POST request + response), both to correct preview URL, no 'undefined' URLs detected. Screenshot captured showing authenticated dashboard with navigation menu and empty state. USER-REPORTED BUG COMPLETELY RESOLVED - the frontend env reload fix worked perfectly. Login flow fully functional."
+
 ## metadata:
 ##   created_by: "main_agent"
 ##   version: "1.0"
-##   test_sequence: 16
+##   test_sequence: 17
 ##   run_ui: false
 ## test_plan:
 ##   current_focus:
-##     - "GitHub import runtime restoration verification"
+##     - "Login bug fix verification (frontend env reload)"
 ##   stuck_tasks: []
 ##   test_all: false
 ##   test_priority: "high_first"
@@ -640,4 +658,25 @@
 ##     -message: "COMMIT BINDING FIX: testing agent had switched commit param from Query to Form, which would break the frontend Apply button (frontend sends ?commit=true as URL query param, like SellerFlash). Fixed to accept BOTH: commit via Query AND commit_form via Form, do_commit parses either ('1/true/yes/on'). Frontend contract preserved. Please RE-VERIFY: (1) commit works via QUERY param (frontend path) — multipart file + ?commit=true must actually commit (batch written, committed=true); (2) commit also works via multipart FORM field; (3) source-independent matching proof: create a NEW test store + a MANUALLY created income transaction (POST /api/transactions or UI-equivalent endpoint, source NOT amazon_payments_csv) with a fresh order id, restart-free, then All Orders preview must show matched=true immediately; apply -> transaction enriched, no new transaction; re-upload -> no_change/enrichment_required=0; clean up synthetic data; (4) exact order 701-7543735-7207422 now idempotent: preview shows no_change, unchanged=1, enrichment_required=0, transaction still FBA-enriched with amount 90 CAD unchanged."
 
 ##     -agent: "main"
+##     -agent: "main"
+##     -message: "Login bug reported at new preview URL https://136d1416-b1fc-44ae-8449-4020b51cacfc.preview.emergentagent.com: login page loads but credentials fail. Root cause: frontend started before .env existed, API calls went to 'undefined/api/...'. Fix: restarted frontend service to load REACT_APP_BACKEND_URL. Backend already verified working. Minimal browser verification requested: confirm login succeeds, no 'Giriş başarısız' error, dashboard loads, correct backend URL used (not undefined), POST /api/auth/login returns 200, no CORS errors."
+##     -agent: "testing"
+##     -message: "LOGIN BUG FIX VERIFIED SUCCESSFULLY. Minimal browser verification completed at https://136d1416-b1fc-44ae-8449-4020b51cacfc.preview.emergentagent.com with admin@amzsuite.com/admin123. ALL 10 TESTS PASSED (100%): Login page renders with Turkish UI ✅, credentials entered ✅, login submitted ✅, NO 'Giriş başarısız' error ✅, redirected to dashboard ✅, dashboard content loaded (empty state 'İlk mağazanı oluştur') ✅, POST /api/auth/login used CORRECT URL (https://136d1416-b1fc-44ae-8449-4020b51cacfc.preview.emergentagent.com/api/auth/login, NOT 'undefined/api/...') ✅, returned 200 OK ✅, correct CORS headers present ✅, NO CORS errors in console ✅. Network monitoring confirmed no 'undefined' URLs. Screenshot captured. Frontend env reload fix worked perfectly - bug COMPLETELY RESOLVED."
+
 ##     -message: "BRANCH IMPORT (user request): imported https://github.com/harune563-alt/seller-finance-tool branch emergent-latest-20261011 EXACTLY as-is (HEAD ddc18f9 'FBA lot import, low-stock alerts and a store-filtered Dashboard updates'). git fetch + git restore discarded local test-file modifications; NO source/business-logic/UI changes, NO branch merge/switch. Recreated missing protected env files for this workspace: backend/.env (MONGO_URL local, DB_NAME=amazon_seller_suite, JWT_SECRET/WEBHOOK_CRON_SECRET regenerated, CORS_ORIGINS=https://136d1416-b1fc-44ae-8449-4020b51cacfc.preview.emergentagent.com, CORS_ORIGIN_ALIASES={}, FRANKFURTER_BASE_URL=https://api.frankfurter.dev/v2, FX_TIMEOUT_SECONDS=10, LOGIN_MAX_ATTEMPTS=5, LOGIN_LOCKOUT_SECONDS=300) and frontend/.env (REACT_APP_BACKEND_URL=same preview URL). Backend deps verified present in /root/.venv (pip fresh-resolve has a known litellm direct-URL hash quirk, runtime unaffected); yarn install OK. Backend RUNNING: 'Application startup complete', admin@amzsuite.com seeded. Frontend RUNNING: webpack compiled (1 benign eslint warning). Credentials written to /app/memory/test_credentials.md. Project ready for next development task."
+
+## backend:
+##   - task: "Preview login failure after branch import (root cause + minimal fix)"
+##     implemented: true
+##     working: true
+##     file: "frontend/.env (runtime only, no code change)"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##         -working: false
+##         -agent: "user"
+##         -comment: "Login page loads on current preview URL but admin@amzsuite.com/admin123 returns failure after migration."
+##         -working: NA
+##         -agent: "main"
+##         -comment: "Minimal checks: backend logs showed ZERO /api/auth/login attempts (request never reached backend); admin user EXISTS in amazon_seller_suite with bcrypt hash validating admin123; JWT_SECRET present; CORS_ORIGINS matches current preview origin. ROOT CAUSE: frontend supervisor process had auto-started BEFORE frontend/.env was recreated during import, so the running dev server had REACT_APP_BACKEND_URL=undefined and login calls never left the browser. MINIMAL FIX: restarted frontend only (no code/config changes). Verification: single POST /api/auth/login via preview URL with Origin header returned 200 + correct ACAO + allow-credentials + HttpOnly cookie + token. Browser login test pending (testing agent)."
