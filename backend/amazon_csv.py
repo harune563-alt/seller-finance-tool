@@ -41,6 +41,18 @@ ALIASES = {
     "servicefees": "Service Fees",
 }
 
+# Internal classification per accepted category; raw Amazon label is kept separately.
+AD_CATEGORY = "Advertising"
+PPC_ADVERTISING_EXPENSE = "PPC_ADVERTISING_EXPENSE"
+CLASSIFICATIONS = {
+    "Order payments": "ORDER_PAYMENT", "Refunds": "REFUND",
+    "Service Fees": "SERVICE_FEE", AD_CATEGORY: PPC_ADVERTISING_EXPENSE,
+}
+# Extensible advertising concepts matched inside the normalized type text.
+AD_KEYWORDS = ("advertis", "ppc", "sponsored", "cost of ads", "ad fee", "ad charge",
+               "ad spend", "ads fee", "ads charge", "reklam")
+AD_WORD = re.compile(r"\bads?\b")
+
 # Normalized header candidates per semantic field. normalize_header() strips
 # whitespace, underscores and hyphens so every alias listed in the spec maps.
 FIELD_ALIASES = {
@@ -96,6 +108,20 @@ def _collapse(value):
 def normalize(value):
     """Lowercase, collapsed whitespace, underscores to spaces. Used for category text."""
     return " ".join(_collapse(value).lower().replace("_", " ").split())
+
+
+def normalize_type(value):
+    """Transaction-type match key: case/space/hyphen/underscore/hidden-char insensitive."""
+    return " ".join(re.sub(r"[_\-\u2010-\u2015]+", " ", _collapse(value).lower()).split())
+
+
+def classify_type(raw):
+    """(category, classification) or (None, None) when the type cannot be safely mapped."""
+    key = normalize_type(raw)
+    category = ALIASES.get(key) or ALIASES.get(key.replace(" ", ""))
+    if not category and (any(k in key for k in AD_KEYWORDS) or AD_WORD.search(key)):
+        category = AD_CATEGORY
+    return (category, CLASSIFICATIONS[category]) if category else (None, None)
 
 
 def normalize_header(value):
@@ -277,7 +303,7 @@ def parse_amazon_csv(content, marketplace, currency, column_mapping=None):
     currency_match = re.search(r"\(\s*([a-zA-Z]{3})\s*\)", amount_header or "")
     uses_signed_amount = amount_header_norm in {"total"} or _AMOUNT_WITH_CURRENCY.match(amount_header_norm)
 
-    accepted, rejected = [], []
+    accepted, rejected, review = [], [], []
     occurrences = Counter()
     reader = csv.reader(io.StringIO("\n".join(lines[header_index + 1:])), delimiter=delimiter)
 
@@ -299,9 +325,18 @@ def parse_amazon_csv(content, marketplace, currency, column_mapping=None):
             type_raw = _collapse(cell(auto["transaction_type"]))
             if not type_raw:
                 raise ValueError("İşlem türü boş")
-            category = ALIASES.get(normalize(type_raw))
+            category, classification = classify_type(type_raw)
             if not category:
-                raise ValueError("Desteklenmeyen işlem türü: " + type_raw)
+                # Unknown type: keep structurally valid rows for review, never book them.
+                review.append({
+                    "line": line_number, "raw_transaction_type": type_raw,
+                    "classification": "UNKNOWN_REVIEW_REQUIRED",
+                    "date": parse_date(cell(auto["transaction_date"]), marketplace),
+                    "amount": float(parse_amount(cell(amount_header), delimiter == ";")),
+                    "order_id": (cell(auto["order_id"]) or "").strip(),
+                    "description": _collapse(cell(auto["description"])),
+                })
+                continue
 
             row_currency = (cell(auto["currency"]) or "").strip().upper() or (
                 currency_match[1].upper() if currency_match else currency
@@ -344,6 +379,8 @@ def parse_amazon_csv(content, marketplace, currency, column_mapping=None):
                 "quantity": _collapse(cell(auto["quantity"])),
                 "amazon_txn_id": _collapse(cell(auto["amazon_txn_id"])),
                 "source": "amazon_payments_csv",
+                "raw_transaction_type": type_raw,
+                "classification": classification,
             }
 
             # Stable semantic identity: survives column reorder, extra custom
@@ -362,8 +399,9 @@ def parse_amazon_csv(content, marketplace, currency, column_mapping=None):
             accepted.append(doc)
         except (ValueError, InvalidOperation) as exc:
             rejected.append({"line": line_number, "reason": str(exc) or "Geçersiz tutar"})
-        if len(accepted) + len(rejected) > 10000:
+        if len(accepted) + len(rejected) + len(review) > 10000:
             raise ValueError("En fazla 10.000 satırlık CSV yükleyin")
 
     diagnostics = _build_diagnostics(original_headers, overrides, auto_detected=auto)
+    diagnostics["review_required"] = review
     return accepted, rejected, diagnostics

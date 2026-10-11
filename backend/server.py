@@ -234,6 +234,9 @@ class TransactionOut(TransactionIn):
     amazon_order_item_ids: Optional[List[str]] = None
     # Additive FBA FIFO cost/profit metadata (never changes amounts).
     fba_fifo: Optional[dict] = None
+    # Additive Amazon CSV type metadata (original label + internal classification).
+    raw_transaction_type: Optional[str] = None
+    classification: Optional[str] = None
 
 
 class SummaryBucket(BaseModel):
@@ -335,6 +338,7 @@ class CsvDiagnosticsOut(BaseModel):
     unknown_custom_columns: List[str] = Field(default_factory=list)
     missing_required_fields: List[str] = Field(default_factory=list)
     mappable_fields: List[str] = Field(default_factory=list)
+    review_required: List[dict] = Field(default_factory=list)
 
 
 class ImportOut(BaseModel):

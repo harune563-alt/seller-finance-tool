@@ -150,7 +150,7 @@ const RowItem = ({ row, section, onDelete }) => (
   </tr>
 );
 
-export default function SectionLedger({ section, title, subtitle }) {
+export default function SectionLedger({ section, title, subtitle, embedded = false }) {
   const { activeStore, activeStoreId } = useStore();
   const [revision, setRevision] = useState(0);
   const refresh = () => setRevision((v) => v + 1);
@@ -176,12 +176,16 @@ export default function SectionLedger({ section, title, subtitle }) {
 
   return (
     <div className="space-y-6" data-testid={`${section}-page`}>
-      <div className="flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="font-display text-3xl sm:text-4xl font-extrabold">{title}</h1>
-          <p className="mt-2 text-sm text-slate-500">{activeStore?.name || "Mağaza seçilmedi"} · {subtitle}</p>
+      {embedded ? (
+        <p className="text-sm text-slate-500">{activeStore?.name || "Mağaza seçilmedi"} · {subtitle}</p>
+      ) : (
+        <div className="flex items-end justify-between flex-wrap gap-4">
+          <div>
+            <h1 className="font-display text-3xl sm:text-4xl font-extrabold">{title}</h1>
+            <p className="mt-2 text-sm text-slate-500">{activeStore?.name || "Mağaza seçilmedi"} · {subtitle}</p>
+          </div>
         </div>
-      </div>
+      )}
       {!activeStoreId ? (
         <Link to="/stores" className="text-emerald-700 underline">Mağaza oluştur</Link>
       ) : (

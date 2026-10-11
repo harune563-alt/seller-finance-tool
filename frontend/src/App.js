@@ -17,13 +17,12 @@ import CompanyOverview from "@/pages/company/Overview";
 import Capital from "@/pages/company/Capital";
 import Debts from "@/pages/company/CurrentAccounts";
 import Closings from "@/pages/company/Closings";
-import SectionLedger from "@/pages/SectionLedger";
 import CategorySettings from "@/pages/CategorySettings";
 import SellerFlashImport from "@/pages/SellerFlashImport";
 import AmazonOrdersImport from "@/pages/AmazonOrdersImport";
 import FbaTracking from "@/pages/FbaTracking";
 import CashFlow from "@/pages/CashFlow";
-import PpcAttribution from "@/pages/PpcAttribution";
+import Ppc from "@/pages/Ppc";
 
 function App() {
   return (
@@ -38,8 +37,8 @@ function App() {
               <Route path="/transactions" element={<Transactions />} />
               <Route path="/fba" element={<FbaTracking />} />
               <Route path="/cashflow" element={<CashFlow />} />
-              <Route path="/ppc" element={<SectionLedger section="ppc" title="PPC Reklam Takibi" subtitle="Kampanya başına tıklama / gösterim / sipariş" />} />
-              <Route path="/ppc-attribution" element={<PpcAttribution />} />
+              <Route path="/ppc" element={<Ppc />} />
+              <Route path="/ppc-attribution" element={<Navigate to="/ppc" replace />} />
               <Route path="/payouts" element={<Payouts />} />
               <Route path="/sellerflash" element={<SellerFlashImport />} />
               <Route path="/amazon-orders" element={<AmazonOrdersImport />} />
