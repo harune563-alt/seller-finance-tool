@@ -44,7 +44,7 @@ from sellerflash_routes import (
 from amazon_orders_import import (
     amazon_orders_router, initialize_amazon_orders_import_indexes,
 )
-from fba import fba_router, initialize_fba_indexes, allocate_user_stores
+from fba import fba_router, initialize_fba_indexes, allocate_user_stores, cleanup_deleted_fba_sales
 from fba_stock import fba_stock_router
 from dashboard_insights import dashboard_router
 from cashflow import cashflow_router, initialize_cashflow_indexes
@@ -650,10 +650,14 @@ async def update_transaction(tx_id: str, data: TransactionIn, user=Depends(get_c
 @api.post("/transactions/bulk-delete")
 async def bulk_delete_transactions(data: BulkDeleteIn, user=Depends(get_current_user)):
     ids = list(dict.fromkeys(data.ids))
+    docs = await db.transactions.find({"id": {"$in": ids}, "user_id": user["id"]},
+                                      {"_id": 0, "store_id": 1, "order_id": 1, "fulfillment_type": 1}).to_list(len(ids))
     result = await db.transactions.delete_many({"id": {"$in": ids}, "user_id": user["id"]})
     if result.deleted_count == 0:
         raise HTTPException(404, "Silinecek işlem bulunamadı")
-    return {"ok": True, "deleted": result.deleted_count}
+    refs = [(d["store_id"], d.get("order_id")) for d in docs if d.get("fulfillment_type") == "FBA"]
+    reversed_allocations = await cleanup_deleted_fba_sales(db, user["id"], refs, user.get("email", "")) if refs else 0
+    return {"ok": True, "deleted": result.deleted_count, "reversed_allocations": reversed_allocations}
 
 
 @api.post("/transactions/bulk-update")
@@ -729,10 +733,16 @@ async def update_transaction_costs(tx_id: str, data: CostsIn, user=Depends(get_c
 
 @api.delete("/transactions/{tx_id}")
 async def delete_transaction(tx_id: str, user=Depends(get_current_user)):
+    tx = await db.transactions.find_one({"id": tx_id, "user_id": user["id"]},
+                                        {"_id": 0, "store_id": 1, "order_id": 1, "fulfillment_type": 1})
     r = await db.transactions.delete_one({"id": tx_id, "user_id": user["id"]})
     if r.deleted_count == 0:
         raise HTTPException(404, "İşlem bulunamadı")
-    return {"ok": True}
+    reversed_allocations = 0
+    if tx and tx.get("fulfillment_type") == "FBA" and tx.get("order_id"):
+        reversed_allocations = await cleanup_deleted_fba_sales(
+            db, user["id"], [(tx["store_id"], tx["order_id"])], user.get("email", ""))
+    return {"ok": True, "reversed_allocations": reversed_allocations}
 
 # ------------------ Dashboard ------------------
 @api.get("/dashboard/summary", response_model=SummaryOut)

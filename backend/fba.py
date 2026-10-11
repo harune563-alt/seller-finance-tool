@@ -303,6 +303,50 @@ async def allocate_user_stores(db, user_id):
         await allocate_store(db, user_id, store["id"])
 
 
+async def reverse_fba_order(db, user_id, store_id, order_id, user_email="", note=""):
+    """Reverse all active FIFO allocations of one order: quantities return to their
+    exact original lots. Only the realized SALE effect is undone; lots are kept."""
+    async with _locks[(user_id, store_id)]:
+        allocs = await db.fba_allocations.find(
+            {"user_id": user_id, "store_id": store_id, "amazon_order_id": order_id,
+             "status": "active"}, {"_id": 0}).to_list(None)
+        for a in allocs:
+            lot = await db.fba_lots.find_one({"id": a["lot_id"]}, {"_id": 0})
+            if not lot:
+                continue
+            new_rem = lot["remaining_quantity"] + a["quantity"]
+            status = CLOSED if lot["lot_status"] == CLOSED else OPEN
+            await db.fba_lots.update_one({"id": lot["id"]}, {"$inc": {"remaining_quantity": a["quantity"]},
+                                                             "$set": {"lot_status": status, "updated_at": now_iso()}})
+            await db.fba_allocations.update_one({"id": a["id"]}, {"$set": {
+                "status": "reversed", "reversed_at": now_iso(), "reversed_by": user_email,
+                "reverse_note": note}})
+            await db.fba_lot_adjustments.insert_one({
+                "id": str(uuid.uuid4()), "user_id": user_id, "user_email": user_email,
+                "store_id": store_id, "lot_id": lot["id"], "lot_code": lot.get("lot_code", ""),
+                "adjustment_type": "reallocation_return",
+                "previous_value": {"remaining_quantity": lot["remaining_quantity"]},
+                "new_value": {"remaining_quantity": new_rem, "amazon_order_id": order_id},
+                "note": note, "timestamp": now_iso()})
+    return len(allocs)
+
+
+async def cleanup_deleted_fba_sales(db, user_id, order_refs, user_email=""):
+    """After sale transactions are deleted: any order left with NO remaining financial
+    records gets its FIFO allocations reversed, so orders/stock/profit panels derive
+    from active data only. The inventory lot itself is never deleted here."""
+    reversed_allocations = 0
+    for store_id, order_id in sorted({(s, o) for s, o in order_refs if o}):
+        remaining = await db.transactions.count_documents(
+            {"user_id": user_id, "store_id": store_id, "order_id": order_id})
+        if remaining:
+            continue
+        reversed_allocations += await reverse_fba_order(
+            db, user_id, store_id, order_id, user_email, "Satış silindi; FIFO iadesi")
+    return reversed_allocations
+
+
+
 # ---------------------------------------------------------------------------
 # Reports
 # ---------------------------------------------------------------------------
@@ -587,6 +631,20 @@ def fba_router(db, get_current_user, marketplaces=None):
         stored = await db.fba_lots.find_one({"id": lot_id}, {"_id": 0, "user_id": 0})
         return (await lot_out([stored]))[0]
 
+    @router.delete("/lots/{lot_id}")
+    async def delete_lot(lot_id: str, user=Depends(get_current_user)):
+        """Explicit lot delete. A lot consumed by active FBA sales is never orphaned:
+        deletion is blocked until those sales are deleted/reversed first."""
+        lot = await own_lot(lot_id, user)
+        active = await db.fba_allocations.count_documents({"lot_id": lot_id, "status": "active"})
+        if active:
+            raise HTTPException(409, "Bu lot aktif FBA satışlarında kullanılıyor. Önce bağlı satışları silin veya geri alın.")
+        await db.fba_lots.delete_one({"id": lot_id, "user_id": user["id"]})
+        await audit(user, lot, "delete_lot",
+                    {"original_quantity": lot["original_quantity"],
+                     "remaining_quantity": lot["remaining_quantity"]}, None)
+        return {"deleted": True, "id": lot_id}
+
     @router.get("/lots/{lot_id}/history")
     async def lot_history(lot_id: str, user=Depends(get_current_user)):
         await own_lot(lot_id, user)
@@ -607,23 +665,10 @@ def fba_router(db, get_current_user, marketplaces=None):
         """Controlled recalculation: reverse this order's FIFO allocations (stock returns to
         the same lots, audited) and run a fresh FIFO pass."""
         await own_store(data.store_id, user)
-        async with _locks[(user["id"], data.store_id)]:
-            allocs = await db.fba_allocations.find(
-                {"user_id": user["id"], "store_id": data.store_id, "amazon_order_id": data.order_id,
-                 "status": "active"}, {"_id": 0}).to_list(None)
-            for a in allocs:
-                lot = await db.fba_lots.find_one({"id": a["lot_id"]}, {"_id": 0})
-                new_rem = lot["remaining_quantity"] + a["quantity"]
-                status = CLOSED if lot["lot_status"] == CLOSED else OPEN
-                await db.fba_lots.update_one({"id": lot["id"]}, {"$inc": {"remaining_quantity": a["quantity"]},
-                                                                 "$set": {"lot_status": status, "updated_at": now_iso()}})
-                await db.fba_allocations.update_one({"id": a["id"]}, {"$set": {
-                    "status": "reversed", "reversed_at": now_iso(), "reversed_by": user.get("email", ""),
-                    "reverse_note": data.note}})
-                await audit(user, lot, "reallocation_return", {"remaining_quantity": lot["remaining_quantity"]},
-                            {"remaining_quantity": new_rem, "amazon_order_id": data.order_id}, data.note)
+        reversed_count = await reverse_fba_order(db, user["id"], data.store_id, data.order_id,
+                                                 user.get("email", ""), data.note)
         await allocate_store(db, user["id"], data.store_id)
-        return {"reversed_allocations": len(allocs)}
+        return {"reversed_allocations": reversed_count}
 
     @router.get("/orders")
     async def fba_orders(store_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None,
