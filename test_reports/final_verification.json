@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-05",
+  "status": "passed",
+  "case_type": "feature_addition_and_bug_fixes",
+  "backend": {
+    "passed": 20,
+    "failed": 0,
+    "tests": ["/app/backend/tests/test_finance_regression.py", "/app/backend/tests/test_auth_hardening.py"],
+    "evidence": "/app/test_reports/pytest/final_backend_retest.xml"
+  },
+  "frontend": {
+    "normal_cookie_session_without_workaround": true,
+    "passed": [
+      "Store creation via browser POST200; valid marketplace selection on store switch",
+      "Income1000 costs520, refund1000 recoveries480, fee20 => net-60 margin-6.00% in one order row",
+      "Negative refund signs, positive recovery values, pale-red loss and green profit states",
+      "Edit refund shipping recovery80->100 => net-40; delete only fee20 => net-20",
+      "Dashboard and Report match transaction summary",
+      "CSV preview/commit accepts3 supported rows and flags1 unknown; repeat preview3 duplicates and disabled import",
+      "Same Order ID in DE/FR EUR gives two separate groups; blank Order IDs remain separate",
+      "USD and CAD kept separate even with ALL marketplaces selected",
+      "Profit/loss filters operate on full grouped orders",
+      "Transactions/Report/Dashboard/Payouts no document horizontal overflow at320/768/1024/1440",
+      "No Select uncontrolled or Recharts negative-size warning in final browser run"
+    ],
+    "evidence": [
+      "/root/.emergent/automation_output/20261005_155602/console_20261005_155602.log",
+      "/root/.emergent/automation_output/20261005_155714/console_20261005_155714.log",
+      "/app/test_reports/final-orders-verified.jpg"
+    ],
+    "test_note": "First forced-click CSV dialog reopen was too early during exit animation; rerun waited for closure and confirmed repeat-preview behavior. No cookie-clearing workaround used in final verification."
+  },
+  "previous_report_findings_resolved": {
+    "iteration_2": ["marketplace empty state", "login failure limits", "credentialed CORS wildcard"],
+    "iteration_3": ["rotating ingress IP split login counters", "rewritten Origin blocked cookie mutations/preflight", "chart initial-dimension warnings", "cross-marketplace separation uncertainty"]
+  },
+  "build": "yarn build passed; /app/test_reports/finance-build.log",
+  "cleanup": "Verification and iteration3 test stores deleted; original stores untouched; generated test accounts recorded in memory/test_credentials.md",
+  "mocked_apis": [],
+  "pending": ["ChatGPT use case/model/key choice; no AI integration implemented", "User-provided real Amazon CSV sample acceptance", "FX conversion and high-volume server-side order pagination remain backlog"]
+}

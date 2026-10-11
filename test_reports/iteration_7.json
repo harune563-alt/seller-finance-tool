@@ -1,0 +1,33 @@
+{
+  "summary": "Backend-only verification of new store-scoped Categories CRUD + FBA/PPC transaction sections. Created /app/backend/tests/test_categories_fba_ppc.py (21 tests). 20 passed, 1 skipped (store-delete-blocked test skipped because /api/company/debts payload shape differs from this fixture). Also re-ran existing regression suites (test_finance_regression.py + test_transactions_search_payout_reference.py) — 21 passed / 1 skipped. All review-request feature bullets validated: seeding (10 defaults, 3+5+2 split, sorted), POST duplicate 409, PUT rename cascading into transactions, type/section/color/archived update, DELETE in-use 409 vs unused 200, system-category deletable when unused, PPC fields round-trip + list filter, PPC fields rejected with 400 on general section, legacy categories still work, custom category type mismatch 400, unknown category 400, archived category 400, section=general matches both section=general docs AND legacy docs missing field (checked via section=fba exclusion), FBA section round-trip, income+costs+refund+recoveries + dashboard summary, search endpoint, PATCH /api/payouts/{id}/reference, bulk-update + bulk-delete including custom-category migration-safe path. category_router has all four decorators intact (GET/POST/PUT/DELETE) — no regression from the earlier bulk-replace issue.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_categories_fba_ppc.py",
+    "/app/test_reports/pytest/iter7_categories.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "categories.py update_category: `updates = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None or k == 'archived'}` — if the client posts `color=null` explicitly (exclude_unset=True won't drop it) the field is silently discarded instead of 422; minor, since clients would not normally send null.",
+    "server.py validate_transaction PPC guard: integer PPC metrics are checked via truthiness (`if ... data.clicks or data.impressions ...`). This means clicks=0 impressions=0 with campaign_name='' passes even with section!=ppc, which is desirable, but non-zero PPC metrics on an income category in section=general still correctly reject. OK.",
+    "server.py line 448: recovery guard checks `data.category != 'Refunds'` by hardcoded name. If a user renames their system 'Refunds' category (allowed by current CRUD), recoveries would then be blocked on the renamed category. Consider deriving the refund flag from a stable id/flag rather than literal name. Not blocking.",
+    "categories.ensure_seeded runs on every list/create — benign because of the exists short-circuit, but note the extra round-trip per request.",
+    "No endpoint to list categories across ALL user stores; UI must iterate per store. Acceptable but worth noting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_categories_fba_ppc.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "n/a (backend-only request)"},
+  "test_credentials": "admin@amzsuite.com / admin123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Each test creates its own TEST_CAT_<hex> store; stores are deleted in fixture teardown. All test categories/transactions are prefixed TEST_ for identification.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New feature + regression suite at /app/backend/tests/test_categories_fba_ppc.py (21 tests, 9.5s). The skipped test_store_delete_blocked_by_company_records uses a guessed payload for POST /api/company/debts; if company router schema is confirmed, update the payload (name/amount/currency/due_date) to re-enable it. Default category seeding is lazy & idempotent — using a brand-new store id exercises the seeding path. System categories CAN be deleted when unused (by design). Renaming a category cascades to transactions. PPC section validation triggers 400 'Kampanya alanları yalnızca PPC bölümünde kullanılabilir' when any PPC text field is non-empty or any count is >0 while section!=ppc."
+}

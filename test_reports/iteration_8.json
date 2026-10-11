@@ -1,0 +1,44 @@
+{
+  "summary": "Frontend-only E2E for new CategorySettings (Ayarlar), FBA/PPC pages and Transactions regression. Nav verified (9 testIds). Category CRUD + archive + duplicate error ('Bu isimde bir kategori zaten var') + delete all pass. PPC form: KPI card correctly computes CTR = 2.00% (100/5000), row written and visible. FBA form: record saved with FBA Depolama Ücreti category. Transactions regression: API-loaded categories (Refunds / Service Fees / Order payments) now populate the dropdown correctly. Responsive at 390px: nav wraps gracefully, no horizontal overflow on /ppc, /fba, /settings/categories. One critical bug found and fixed in useCategories.byType filter (undefined type comparison) that was blocking the PPC and FBA category dropdowns from populating.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "useCategories hook (consumed by PpcForm & SectionLedger GenericForm)",
+        "issue": "byType(undefined, section) always returned [] because the filter required c.type === undefined. As a result the PPC Kategori and FBA Kategori <Select> dropdowns were empty, PPC/FBA submit buttons stayed disabled, and no PPC or FBA record could be created at all. FIXED by me: filter now treats a null/undefined type as 'any type'.",
+        "selector": "[data-testid=\"ppc-category-select\"], [data-testid=\"fba-category-select\"]",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iter8_cats.jpeg",
+    "/app/test_reports/iter8_catsCRUD.jpeg",
+    "/app/test_reports/iter8_ppc_after.jpeg",
+    "/app/test_reports/iter8_fba.jpeg",
+    "/app/test_reports/iter8_tx.jpeg",
+    "/app/test_reports/iter8_ppc_mobile.jpeg",
+    "/app/test_reports/iter8_fba_mobile.jpeg",
+    "/app/test_reports/iter8_cat_mobile.jpeg"
+  ],
+  "action_items": [
+    "Review the useCategories.byType fix (null-safe type filter). Consider also exposing a dedicated bySection helper for form-side consumers so callers don't need to pass undefined as a sentinel.",
+    "Admin test store has only TR + CA marketplaces, not US — tester used TR for CTR verification. If US coverage is needed in regression, add US marketplace to the seed store."
+  ],
+  "critical_code_review_comments": [
+    "useCategories.byType originally filtered with strict equality against an undefined argument — a classic sentinel bug. The call sites in PpcForm and SectionLedger passed undefined intentionally to mean 'any type', which silently produced empty option lists. The fix treats null/undefined as a wildcard.",
+    "SectionLedger.GenericForm computes activeCat via options.find((c) => c.name === form.category) || options[0]; if the user never explicitly selects a category and options loads async, the type is derived from options[0]. Consider forcing the user to pick a category explicitly before enabling the submit button to avoid saving under an unexpected category.",
+    "PpcForm's aggregate_mode switch currently has no behavioural effect — toggling it only changes a label and the toast text, but the payload shape is identical. The spec also calls this out, but it is worth either hiding the toggle until the two modes diverge, or persisting the mode so the backend can later distinguish aggregate vs per-event rows."
+  ],
+  "updated_files": [
+    "/app/frontend/src/hooks/useCategories.js"
+  ],
+  "success_rate": {"backend": "n/a", "frontend": "100% after 1 fix (0% before fix on PPC/FBA create flows)"},
+  "seed_data_creation": "Created and deleted: 1 custom category (TEST Reklam Danışmanlığı v2), 1 PPC row, 1 FBA row — all cleaned up at end of run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "iter8 fixed useCategories.byType to allow undefined type = any. If main agent reworks the hook or adds a dedicated bySection helper, re-verify PPC & FBA category dropdowns actually populate (previous bug symptom: empty dropdown, submit button stays disabled). Admin store marketplaces at the time of this run were [TR, CA]; US was unavailable from the store switcher.",
+  "rca of the issue": "Root cause: useCategories.byType was written as `(type, section) => filter(c => c.type === type && ...)`. Both PpcForm and SectionLedger.GenericForm called byType(undefined, section) meaning 'all types in this section', but c.type is always a string ('income'|'expense'), so c.type === undefined was always false and the returned array was empty. Reproduction: login as admin@amzsuite.com → nav to /ppc → open 'Kategori' dropdown → 0 options → PPC Kaydet button disabled. Mitigation applied: change the filter to `(type == null || c.type === type)` so an unspecified type matches any type."
+}

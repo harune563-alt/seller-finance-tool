@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-05",
+  "status": "passed",
+  "backend_tests_passed": 33,
+  "backend_evidence": "/app/test_reports/pytest/pytest_results_iter4_backend_full.xml",
+  "testing_report": "/app/test_reports/iteration_4.json",
+  "report_findings_resolved": ["FxStatus key-spread warning removed; verified console", "Previously skipped UI delete verified in populated isolated store"],
+  "additional_ui_checks": ["Deleting native CAD service fee increments net profit by locked USD amount and CAD balance by original CAD amount", "Transactions/dashboard/payouts/report: no page overflow at320px", "Test store cleanup200"],
+  "console_evidence": "/root/.emergent/automation_output/20261005_163352/console_20261005_163352.log",
+  "mocked_app_integrations": [],
+  "provider": "Frankfurter v2 actual historical reference rates; unit tests simulate outages only",
+  "remaining": ["User real Amazon CSV acceptance", "ChatGPT usage/model choice from previous request", "Real payout vs reference FX difference tracking is future enhancement"]
+}

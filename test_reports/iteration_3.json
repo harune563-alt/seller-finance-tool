@@ -1,0 +1,77 @@
+{
+  "summary": "Ran backend + frontend regression for auth hardening and P&L workflows. Backend finance suite passed (11/11), but auth-hardening suite found lockout/CORS regressions. Frontend core order grouping/edit/refund/csv/payout flows were validated after a temporary cookie-clear workaround due a blocking 403 write bug.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/auth/login",
+        "issue": "Lockout is inconsistent across requests: 5 bad attempts did not reliably return 429 and successful login did not reliably clear counters. Root cause: identifier uses request.client.host + email; upstream IP varies (seen 10.6.131.139/10.6.131.140), splitting attempt counters.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "CORS preflight + cookie-origin middleware",
+        "issue": "Allowed preview origin OPTIONS preflight to /api/auth/login returns 400 'Disallowed CORS origin'. Browser-authenticated POST mutations with cookie (e.g., /api/stores) return 403 and block normal UI write flows.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Stores create flow",
+        "issue": "With normal cookie-based login session, creating a store shows 'Kayıt başarısız' due backend 403. UI writes only worked after clearing cookie and relying on Bearer token.",
+        "selector": "[data-testid='new-store-button'] -> [data-testid='store-submit-button']",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Same order id across marketplaces",
+        "issue": "Observed mismatch with expected separation count in one run (CROSSMP grouped rows reported 1 instead of 2 under ALL context). Needs deterministic retest after auth/CORS blocker is fixed.",
+        "affected_selectors": [
+          "[data-order-id='CROSSMP']",
+          "[data-testid='tx-marketplace-select']",
+          "[data-testid='tx-currency-select']"
+        ]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Dashboard charts",
+        "issues": [
+          "Repeated console warnings from Recharts: width/height -1 on initial render."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_finance_regression.py",
+    "/app/backend/tests/test_auth_hardening.py",
+    "/app/test_reports/pytest/pytest_results_iter3_regression.xml",
+    "/app/test_reports/pytest/pytest_results_iter3_auth.xml"
+  ],
+  "action_items": [
+    "Fix auth attempt keying to be stable per user/client context (do not rely on request.client.host behind ingress).",
+    "Fix CORS/preflight config for trusted preview origin and ensure cookie-based same-origin writes are not blocked.",
+    "Rerun UI end-to-end without cookie workaround once auth/CORS is fixed.",
+    "Retest multi-marketplace same-order separation deterministically after above blocker fix."
+  ],
+  "critical_code_review_comments": [
+    "Using request.client.host in brute-force identifier is brittle in proxied deployments and breaks lockout/reset consistency.",
+    "Current middleware blocks legitimate browser cookie-authenticated mutation requests in preview environment.",
+    "Auth hardening acceptance criteria for lockout + allowed-origin preflight is not fully met."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_hardening.py",
+    "/app/test_reports/iteration_3.json"
+  ],
+  "success_rate": {
+    "backend": "85%",
+    "frontend": "70%"
+  },
+  "seed_data_creation": "Created test stores TEST_I3_USCA_154202, TEST_I3_CA_154202 plus test transactions/orders (TEST-1, TEST-2, CROSSMP, CSV-ORDER-1/2) and payout rows for workflow validation.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Key blocker: with standard cookie session, POST writes return 403. For coverage continuation, I used temporary cookie clearing in browser sessions to continue testing with Bearer token only. Core financial math/grouping for TEST-1/TEST-2 verified, refund recovery edit verified, CSV preview+commit verified once, payout effect verified (Bankada lowers amazon balance and increases received; Olusturuldu leaves both unchanged), CA-only store labels validated via store-switcher dropdown.",
+  "rca of the issue": "Auth lockout inconsistency RCA: identifier includes request.client.host, but host changes per request through ingress, creating multiple login_attempt documents for same email and bypassing threshold/reset behavior. CORS/UI write RCA: trusted origin handling rejects allowed preflight and cookie-origin middleware returns 403 for legitimate browser mutation requests, causing 'Kayıt başarısız' in normal authenticated UI flow."
+}
