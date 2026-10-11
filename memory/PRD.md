@@ -27,6 +27,14 @@ Import and run existing project from GitHub (repo: harune563-alt/seller-finance-
 - Broad regression suite intentionally not run per user instruction
 - 2026-10-11 Login fix: user preview is the alias origin https://amz-finance-suite.preview.emergentagent.com; it was missing from backend CORS_ORIGINS → browser blocked the login preflight (no request ever reached backend). Env-only fix: added alias origin to CORS_ORIGINS, restarted backend. Verified in real browser on the alias URL: login 200 → Dashboard loads.
 
+## Unified PPC Module (2026-10-11)
+- /ppc single page (nav "PPC Reklam"; /ppc-attribution redirects). Tabs: Genel Bakış, Kayıtları, ASIN/Kampanya Dağılımı, Amazon Payments Mutabakatı
+- Merged old PpcAttribution page + SectionLedger(ppc) (legacy manual financial ad ledger kept embedded in Mutabakat tab with warning)
+- Attribution fields added: ppc_category, ad_type, notes; ASIN→SKU lookup from fba_lots (/api/ppc/asin-lookup); PPC report CSV/XLSX import (/api/ppc/attributions/import-file, idempotent upsert)
+- Statuses: reconciled, partially_reconciled, pending_match, financial_only, ppc_only, unmatched; overview adds allocated/unallocated, clicks, impressions, orders, CTR, ASIN/campaign filters
+- Amazon Payments CSV: normalized type matching, advertising keywords → category "Advertising" / classification PPC_ADVERTISING_EXPENSE, raw_transaction_type kept, no Order ID needed; unknown types → diagnostics.review_required (not booked, rest of file continues)
+- Focused tests: backend/tests/test_ppc_unified.py 8/8 pass
+
 ## Backlog
 - P0: none — ready for next development task
 - P1/P2: per user's next feature requests

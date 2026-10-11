@@ -1,0 +1,30 @@
+{
+  "summary": "Focused end-to-end tests on unified /ppc page: Amazon Payments CSV ad-row acceptance (variant labels, empty order id, unknown-type review-required, re-import idempotency), PPC attribution reconciliation (reconciled + partially_reconciled), PPC report file importer idempotency, dashboard summary not double-counting advertising, FBA overlay attribution not inflating expenses, and single browser UI check on /ppc. All 8 backend tests passed; frontend UI verified: nav 'PPC Reklam' only, /ppc-attribution -> /ppc redirect, 4 tabs, finance-note, all 11 KPI testids, Entry dialog with Tarih/Pazar/PPC Kategori/Kampanya/Reklam Tipi/ASIN/SKU/Harcama/Satis/Tiklama/Gosterim/PPC Siparis/Not fields.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PPC Manuel Giriş dialog (ppc-dialog)", "issues": ["Tarih field uses browser's default <input type=\"date\"> picker instead of the shadcn/ui Calendar component used elsewhere in the app — inconsistent UX."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_ppc_unified.py", "/app/test_reports/pytest/ppc_unified.xml"],
+  "action_items": [
+    "(Optional/cosmetic) Replace native date input in PpcEntryDialog with the shadcn Calendar + Popover component used in other dialogs for consistency."
+  ],
+  "critical_code_review_comments": [
+    "classify_type in amazon_csv.py: AD_WORD regex `\\bads?\\b` + AD_KEYWORDS correctly catches 'Sponsored Products Charge', 'ADVERTISING-FEE', 'advertising_charge', ' Sponsored  Brands '. Good coverage.",
+    "amazon_csv.parse_amazon_csv: unknown transaction types correctly go to diagnostics.review_required and do NOT reject the whole CSV. GLOBALLY_REQUIRED is only (date,type,amount) — Order ID is only enforced for Order payments / Refunds, so ad rows without order_id import cleanly. Correct.",
+    "ppc.py reconciliation_status + month_status handle partially_reconciled with TOLERANCE=0.005 correctly.",
+    "ppc.financial_ad_expenses relies on classification == 'PPC_ADVERTISING_EXPENSE' OR category match — this is the single-source rule; attributions never produce expense transactions. Verified via dashboard summary unchanged after attribution.",
+    "Layout nav exposes nav-ppc only and route /ppc-attribution redirects to /ppc via <Navigate to=\"/ppc\" replace />. Clean.",
+    "NOTE (edge case, by design): assign_event_fingerprints is intentionally date-independent (reconciliation.py). Two Amazon CSV ad rows with identical empty order_id + identical amount + identical empty description but different months collide into the same event; the second import treats it as 'date_changed' instead of inserting a new financial row. For real Amazon exports this is normally safe (descriptions differ per statement). Not a bug per spec, but call it out so the Main Agent is aware."
+  ],
+  "updated_files": ["/app/backend/tests/test_ppc_unified.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (all testids present, redirect works, dialog fields all present)"},
+  "test_credentials": "admin@amzsuite.com / admin123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created ephemeral store 'TEST_PPC_<random>' via POST /api/stores; attached transactions + ppc_attributions were cleaned up in module teardown (ppc_attributions deleted individually, then DELETE /api/stores/{id} which also deletes its transactions). The real user store 'ng' was NOT touched.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test file /app/backend/tests/test_ppc_unified.py is self-contained and idempotent (creates/destroys its own TEST_PPC_* store). Run with `pytest backend/tests/test_ppc_unified.py -o addopts= -v`. CORS Origin header 'https://amz-finance-suite.preview.emergentagent.com' is required for state-changing calls when hitting the preview URL."
+}
