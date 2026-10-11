@@ -29,7 +29,7 @@ export const SellerFlashCostSection = ({ orderId, marketplace, storeId }) => {
 
   if (state.loading || !state.record) return null;
   const r = state.record;
-  const money0 = v => (v == null ? "—" : formatMoney(v, r.currency || "USD"));
+  const money0 = v => (v == null ? "—" : formatMoney(v, "USD"));
 
   return <div className="px-4 py-3 border-t border-slate-200 bg-indigo-50/50" data-testid={`sellerflash-section-${orderId}`}>
     <p className="text-xs font-semibold text-indigo-900 mb-2">SellerFlash Maliyet Verisi</p>

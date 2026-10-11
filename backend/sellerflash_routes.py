@@ -1,8 +1,9 @@
 """SellerFlash Cost Import — ayrı modül; mevcut Amazon Payments akışına dokunmaz.
 
-SellerFlash verisi finansal işlem OLUŞTURMAZ; eşleşen canonical Amazon siparişinin
-gelir kaydına ürün/kargo maliyeti olarak eklenir (kullanıcı manuel maliyeti varsa
-asla ezilmez) ve tüm SellerFlash alanları ayrı, denetlenebilir bir kayıtta saklanır.
+SellerFlash verisi finansal işlem OLUŞTURMAZ; eşleşen Amazon siparişinin gelir kaydına
+ürün/kargo maliyeti olarak eklenir (manuel maliyet asla ezilmez).
+Eşleşme yalnızca Seller Order Id = Amazon Order ID. SellerFlash maliyetleri HER ZAMAN USD'dir
+(kur dönüşümü yok). Ürün ve kargo maliyeti bağımsızdır: boş hücre "yeni bilgi yok" demektir.
 """
 import uuid
 from datetime import datetime, timezone
@@ -14,38 +15,50 @@ from pydantic import BaseModel, Field
 from pymongo import UpdateOne
 
 from finance import money
-from fx_service import FxError, get_rate
-from sellerflash import MAX_ROWS, normalize_marketplace, parse_sellerflash
+from sellerflash import normalize_marketplace, parse_sellerflash
 
-STATUS_MATCHED = "matched"
+STATUS_NEW = "new"
+STATUS_RESTORE = "restore_missing_record"
+STATUS_PARTIAL = "partial_cost_completion"
+STATUS_UNCHANGED = "existing_unchanged"
+STATUS_UPDATED = "updated"
+STATUS_MANUAL = "manual_override_preserved"
 STATUS_NOT_FOUND = "amazon_order_not_found"
-STATUS_MP_MISMATCH = "marketplace_mismatch"
-STATUS_NO_PRODUCT_COST = "missing_product_cost"
-STATUS_NO_SHIPPING_COST = "missing_shipping_cost"
-STATUS_ALREADY_IMPORTED = "already_imported"
-STATUS_WILL_UPDATE = "existing_record_will_be_updated"
-STATUS_CONFLICT = "conflict"
+STATUS_NO_COST = "no_cost_data"
+STATUS_FBA = "fba_order_fifo_cost"
 
-COMPARE_FIELDS = ("product_cost", "initial_shipment_cost", "seller_refund", "buyer_refund",
-                  "seller_order_status", "buyer_order_status", "price", "profit",
-                  "profit_rate", "delivery_end_date", "notes")
+APPLY_STATUSES = (STATUS_NEW, STATUS_RESTORE, STATUS_PARTIAL, STATUS_UPDATED)
+COST_KEYS = (("product_cost", "product"), ("initial_shipment_cost", "shipping"))
+REFERENCE_FIELDS = ("seller_refund", "buyer_refund", "seller_order_status", "buyer_order_status",
+                    "buyer_order_id", "price", "profit", "profit_rate", "order_date", "order_date_raw",
+                    "delivery_end_date", "notes")
+COMPARE_FIELDS = ("product_cost", "initial_shipment_cost", *REFERENCE_FIELDS)
 
 
 class SellerFlashRowOut(BaseModel):
     line: int
     seller_order_id: str
     marketplace: str = ""
+    sellerflash_marketplace: str = ""
+    amazon_match: bool = False
     order_date: Optional[str] = None
+    current_product_cost: Optional[float] = None
+    incoming_product_cost: Optional[float] = None
+    current_shipping_cost: Optional[float] = None
+    incoming_shipping_cost: Optional[float] = None
     product_cost: Optional[float] = None
     initial_shipment_cost: Optional[float] = None
     seller_refund: Optional[float] = None
     buyer_refund: Optional[float] = None
     profit: Optional[float] = None
     profit_rate: Optional[float] = None
-    currency: str = ""
+    currency: str = "USD"
+    cost_currency: str = "USD"
+    cost_source: str = ""
     existing_amazon_net_total: Optional[float] = None
     estimated_actual_profit: Optional[float] = None
     match_status: str
+    action: str = ""
     note: str = ""
 
 
@@ -54,11 +67,15 @@ class SellerFlashImportOut(BaseModel):
     matched: int = 0
     new: int = 0
     updated: int = 0
+    partial_completion: int = 0
+    restored: int = 0
+    manual_preserved: int = 0
     unchanged: int = 0
     unmatched: int = 0
     conflicts: int = 0
     missing_product_cost: int = 0
     missing_shipping_cost: int = 0
+    actionable: int = 0
     rejected_count: int = 0
     issues: List[dict] = Field(default_factory=list)
     preview: List[SellerFlashRowOut] = Field(default_factory=list)
@@ -94,34 +111,45 @@ def _has_manual_costs(tx):
     return any(money(tx.get(key, 0)) != 0 for key in ("product_cost", "shipping_cost"))
 
 
-def _diff_fields(existing, incoming):
-    changes = {}
+def _blank(value):
+    return value is None or value == ""
+
+
+def _same(a, b):
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return money(a) == money(b)
+    return a == b
+
+
+def merge_cost_fields(existing, incoming):
+    """Alan-bazında bağımsız birleştirme: boş gelen alan mevcut değeri KORUR; 0 açık sıfırdır.
+    Döner: (birleşik değerler, eklenen alanlar, değişen alanlar {alan: [eski, yeni]})."""
+    existing = existing or {}
+    merged, added, changed = {}, [], {}
     for field in COMPARE_FIELDS:
-        old = existing.get(field)
-        new = incoming.get(field)
-        old_n = money(old) if isinstance(old, (int, float)) and old is not None else old
-        new_n = money(new) if isinstance(new, (int, float)) and new is not None else new
-        if (old_n is None or old_n == "") and (new_n is None or new_n == ""):
-            continue
-        if old_n != new_n:
-            changes[field] = [None if old is None else old, None if new is None else new]
-    return changes
+        cur, new = existing.get(field), incoming.get(field)
+        if _blank(new):
+            merged[field] = cur
+        elif _blank(cur):
+            merged[field] = new
+            added.append(field)
+        else:
+            merged[field] = new
+            if not _same(cur, new):
+                changed[field] = [cur, new]
+    return merged, added, changed
+
+
+def _tx_in_sync(tx, rec_id, merged):
+    """İşlem satırı birleşik SellerFlash maliyetlerini zaten taşıyor mu?"""
+    if not tx or tx.get("cost_source") != "sellerflash" or tx.get("sellerflash_cost_id") != rec_id:
+        return False
+    return all(merged.get(src) is None or money(tx.get(dst, 0)) == money(merged[src])
+               for src, dst in (("product_cost", "product_cost"), ("initial_shipment_cost", "shipping_cost")))
 
 
 def sellerflash_router(db, get_current_user, marketplaces):
     router = APIRouter()
-
-    async def _convert(currency, date_iso, amount):
-        """Bir kerelik kur dönüşümü; tarihsel değerler sonradan asla değişmez."""
-        if amount is None:
-            return None, None
-        if currency == "USD":
-            return float(money(amount)), {"base": currency, "quote": "USD", "rate": "1",
-                                          "requested_date": date_iso, "rate_date": date_iso,
-                                          "source": "identity"}
-        quote = await get_rate(db, currency, date_iso)
-        converted = money(Decimal(str(amount)) * Decimal(str(quote["rate"])))
-        return float(converted), quote
 
     @router.post("/sellerflash/import", response_model=SellerFlashImportOut)
     async def import_sellerflash(
@@ -149,191 +177,161 @@ def sellerflash_router(db, get_current_user, marketplaces):
         scope = {"user_id": user["id"], "store_id": store_id}
         valid_codes = set(marketplaces.keys())
         now = datetime.now(timezone.utc).isoformat()
-        preview = []
-        counts = {"matched": 0, "new": 0, "updated": 0, "unchanged": 0,
-                  "unmatched": 0, "conflicts": 0, "missing_product_cost": 0,
-                  "missing_shipping_cost": 0}
-        plan = []
+        counts = {k: 0 for k in ("matched", "new", "updated", "partial_completion", "restored",
+                                 "manual_preserved", "unchanged", "unmatched", "conflicts",
+                                 "missing_product_cost", "missing_shipping_cost")}
+        preview, plan = [], []
 
         for row in rows:
-            note = ""
-            mp = normalize_marketplace(row.get("marketplace"), valid_codes)
-            status = None
-            income_tx = None
-            order_txs = []
-            order_net_usd = None
-            estimated = None
-            existing_sf = None
+            oid = row["seller_order_id"]
+            sf_mp = normalize_marketplace(row.get("marketplace"), valid_codes) or ""
+            # Eşleşme: YALNIZCA Seller Order Id = Amazon Order ID (pazar yeri / SKU engellemez)
+            order_txs = await db.transactions.find({**scope, "order_id": oid}, {"_id": 0}).to_list(50)
+            incomes = sorted((t for t in order_txs if t.get("type") == "income"), key=lambda t: (t["date"], t["id"]))
+            income_tx = incomes[0] if incomes else None
+            existing_sf = await db.sellerflash_costs.find_one({**scope, "seller_order_id": oid}, {"_id": 0})
+            merged, added, changed = merge_cost_fields(existing_sf, row)
+            cost_added = [f for f, _ in COST_KEYS if f in added]
+            cost_changed = [f for f, _ in COST_KEYS if f in changed]
+            has_cost = merged["product_cost"] is not None or merged["initial_shipment_cost"] is not None
+            amazon_mp = (income_tx or (order_txs[0] if order_txs else {})).get("marketplace", "")
+            is_fba = any(t.get("fulfillment_type") == "FBA" for t in order_txs)
 
-            if not mp:
+            if not order_txs:
                 status = STATUS_NOT_FOUND
-                note = f"Pazar yeri tanınamadı: {row.get('marketplace') or 'boş'}"
-                counts["unmatched"] += 1
-            elif mp not in (store.get("marketplaces") or []):
-                status = STATUS_NOT_FOUND
-                note = "Bu pazar yeri mağazada aktif değil"
-                counts["unmatched"] += 1
+            elif is_fba:
+                status = STATUS_FBA
+            elif not has_cost:
+                status = STATUS_NO_COST
+            elif _has_manual_costs(income_tx):
+                status = STATUS_MANUAL
+            elif not existing_sf:
+                status = STATUS_NEW
+            elif cost_added:
+                status = STATUS_PARTIAL
+            elif cost_changed:
+                status = STATUS_UPDATED
+            elif income_tx and not _tx_in_sync(income_tx, existing_sf["id"], merged):
+                status = STATUS_RESTORE
             else:
-                order_txs = await db.transactions.find(
-                    {**scope, "marketplace": mp, "order_id": row["seller_order_id"]},
-                    {"_id": 0}).to_list(50)
-                income_tx = next((t for t in order_txs if t.get("type") == "income"), None)
-                existing_sf = await db.sellerflash_costs.find_one(
-                    {**scope, "seller_order_id": row["seller_order_id"]}, {"_id": 0})
-                if existing_sf and existing_sf.get("marketplace") != mp:
-                    status = STATUS_MP_MISMATCH
-                    note = f"Kayıt {existing_sf.get('marketplace')} pazarı ile eşleşmiş"
-                    counts["conflicts"] += 1
-                elif existing_sf:
-                    changes = _diff_fields(existing_sf, row)
-                    status = STATUS_WILL_UPDATE if changes else STATUS_ALREADY_IMPORTED
-                    counts["updated" if changes else "unchanged"] += 1
-                    row["_changes"] = changes
-                elif not order_txs:
-                    status = STATUS_NOT_FOUND
-                    counts["unmatched"] += 1
-                elif row.get("product_cost") is None:
-                    status = STATUS_NO_PRODUCT_COST
-                    counts["missing_product_cost"] += 1
-                elif row.get("initial_shipment_cost") is None:
-                    status = STATUS_NO_SHIPPING_COST
-                    counts["missing_shipping_cost"] += 1
-                elif _has_manual_costs(income_tx):
-                    status = STATUS_CONFLICT
-                    note = "Siparişte manuel girilmiş maliyet var; SellerFlash ezmez"
-                    counts["conflicts"] += 1
-                else:
-                    status = STATUS_MATCHED
-                    counts["matched"] += 1
-                    counts["new"] += 1
+                status = STATUS_UNCHANGED
+            key = {STATUS_NOT_FOUND: "unmatched", STATUS_NEW: "new", STATUS_UPDATED: "updated",
+                   STATUS_PARTIAL: "partial_completion", STATUS_RESTORE: "restored",
+                   STATUS_MANUAL: "manual_preserved", STATUS_UNCHANGED: "unchanged",
+                   STATUS_FBA: "conflicts"}.get(status)
+            if key:
+                counts[key] += 1
+            if order_txs:
+                counts["matched"] += 1
+            if merged["product_cost"] is None:
+                counts["missing_product_cost"] += 1
+            if merged["initial_shipment_cost"] is None:
+                counts["missing_shipping_cost"] += 1
 
-            currency = marketplaces[mp]["currency"] if mp else ""
-            if mp and status in (STATUS_MATCHED, STATUS_WILL_UPDATE, STATUS_NO_PRODUCT_COST,
-                                 STATUS_NO_SHIPPING_COST, STATUS_CONFLICT) and order_txs:
-                income_usd = sum(Decimal(str(t.get("amount_usd") or 0)) for t in order_txs if t.get("type") == "income")
-                expense_usd = sum(Decimal(str(t.get("amount_usd") or 0)) for t in order_txs if t.get("type") == "expense")
-                order_net_usd = float(money(income_usd - expense_usd))
-                cost_date = row.get("order_date") or (income_tx or {}).get("original_transaction_date") \
-                    or (income_tx or {}).get("date") or now[:10]
-                try:
-                    product_usd, quote = await _convert(currency, cost_date, row.get("product_cost"))
-                    ship_usd, quote2 = await _convert(currency, cost_date, row.get("initial_shipment_cost"))
-                    row["_usd"] = {"product": product_usd, "shipping": ship_usd,
-                                   "quote": quote or quote2, "cost_date": cost_date}
-                    extra_usd = money(((income_tx or {}).get("usd_costs") or {}).get("extra_cost", 0))
-                    estimated = float(money(Decimal(str(order_net_usd))
-                                            - Decimal(str(product_usd or 0))
-                                            - Decimal(str(ship_usd or 0))
-                                            - extra_usd))
-                except FxError as exc:
-                    if status == STATUS_MATCHED:
-                        counts["matched"] -= 1
-                        counts["new"] -= 1
-                    status = STATUS_CONFLICT
-                    note = f"Kur alınamadı: {exc}"
-                    counts["conflicts"] += 1
+            manual = status == STATUS_MANUAL
+            cur_p = (existing_sf or {}).get("product_cost")
+            cur_s = (existing_sf or {}).get("initial_shipment_cost")
+            if manual:
+                cur_p, cur_s = income_tx.get("product_cost"), income_tx.get("shipping_cost")
+            source = "FBA FIFO" if is_fba else "manual" if manual else \
+                (income_tx or {}).get("cost_source") or ("sellerflash" if existing_sf else "")
+            actions = []
+            if status in APPLY_STATUSES:
+                for f, label in (("product_cost", "Ürün maliyeti"), ("initial_shipment_cost", "Kargo maliyeti")):
+                    if f in added or status == STATUS_NEW and merged[f] is not None:
+                        actions.append(f"{label} eklenecek")
+                    elif f in changed:
+                        actions.append(f"{label} güncellenecek")
+                if status == STATUS_RESTORE:
+                    actions.append("İşlem maliyeti SellerFlash kaydından geri yüklenecek")
+            action = ", ".join(actions) or {
+                STATUS_MANUAL: "Manuel maliyet korunur; yalnızca SellerFlash referansı güncellenir",
+                STATUS_NOT_FOUND: "Referans olarak saklanır; Amazon siparişi gelince eşleşir",
+                STATUS_NO_COST: "Maliyet değeri oluşturulmaz",
+                STATUS_FBA: "FBA siparişi — maliyet FBA FIFO lotlarından gelir",
+            }.get(status, "Değişiklik yok")
 
-            row["_status"] = status
-            row["_mp"] = mp
-            row["_income_tx_id"] = (income_tx or {}).get("id")
-            plan.append({"row": row, "status": status, "mp": mp, "income_tx": income_tx,
-                         "existing_sf": existing_sf, "note": note})
+            estimated = net_usd = None
+            if order_txs and not is_fba:
+                inc = sum(Decimal(str(t.get("amount_usd") or 0)) for t in order_txs if t.get("type") == "income")
+                exp = sum(Decimal(str(t.get("amount_usd") or 0)) for t in order_txs if t.get("type") == "expense")
+                net_usd = float(money(inc - exp))
+                extra = money(((income_tx or {}).get("usd_costs") or {}).get("extra_cost", 0))
+                estimated = float(money(Decimal(str(net_usd)) - money(merged["product_cost"] or 0)
+                                        - money(merged["initial_shipment_cost"] or 0) - extra))
+
+            plan.append({"row": row, "status": status, "merged": merged, "changed": changed,
+                         "income_tx": income_tx, "existing_sf": existing_sf,
+                         "mp": amazon_mp or sf_mp, "sf_mp": sf_mp})
             preview.append(SellerFlashRowOut(
-                line=row["line"], seller_order_id=row["seller_order_id"],
-                marketplace=mp or row.get("marketplace", ""), order_date=row.get("order_date"),
-                product_cost=row.get("product_cost"), initial_shipment_cost=row.get("initial_shipment_cost"),
-                seller_refund=row.get("seller_refund"), buyer_refund=row.get("buyer_refund"),
-                profit=row.get("profit"), profit_rate=row.get("profit_rate"),
-                currency=currency, existing_amazon_net_total=order_net_usd,
-                estimated_actual_profit=estimated, match_status=status, note=note))
+                line=row["line"], seller_order_id=oid, marketplace=amazon_mp or sf_mp,
+                sellerflash_marketplace=row.get("marketplace", ""), amazon_match=bool(order_txs),
+                order_date=merged.get("order_date"),
+                current_product_cost=cur_p, incoming_product_cost=row.get("product_cost"),
+                current_shipping_cost=cur_s, incoming_shipping_cost=row.get("initial_shipment_cost"),
+                product_cost=merged["product_cost"], initial_shipment_cost=merged["initial_shipment_cost"],
+                seller_refund=merged.get("seller_refund"), buyer_refund=merged.get("buyer_refund"),
+                profit=merged.get("profit"), profit_rate=merged.get("profit_rate"),
+                cost_source=source, existing_amazon_net_total=net_usd, estimated_actual_profit=estimated,
+                match_status=status, action=action))
 
         batch_id = None
         applied = 0
         if commit:
             batch_id = str(uuid.uuid4())
             for item in plan:
-                row, status, mp = item["row"], item["status"], item["mp"]
-                if not mp or status == STATUS_MP_MISMATCH:
+                row, status, merged, existing_sf = item["row"], item["status"], item["merged"], item["existing_sf"]
+                oid = row["seller_order_id"]
+                if existing_sf and status in (STATUS_UNCHANGED,) and not item["changed"]:
+                    await db.sellerflash_costs.update_one(
+                        {"id": existing_sf["id"]}, {"$set": {"last_seen_at": now, "last_import_batch_id": batch_id}})
                     continue
-                usd = row.get("_usd") or {}
                 record = {
-                    **scope,
-                    "marketplace": mp,
-                    "seller_order_id": row["seller_order_id"],
-                    "buyer_order_id": row.get("buyer_order_id", ""),
-                    "seller_order_status": row.get("seller_order_status", ""),
-                    "buyer_order_status": row.get("buyer_order_status", ""),
-                    "price": row.get("price"), "profit": row.get("profit"),
-                    "profit_rate": row.get("profit_rate"),
-                    "order_date": row.get("order_date"), "order_date_raw": row.get("order_date_raw", ""),
-                    "product_cost": row.get("product_cost"),
-                    "initial_shipment_cost": row.get("initial_shipment_cost"),
-                    "seller_refund": row.get("seller_refund"), "buyer_refund": row.get("buyer_refund"),
-                    "delivery_end_date": row.get("delivery_end_date"), "notes": row.get("notes", ""),
-                    "currency": marketplaces[mp]["currency"],
-                    "product_cost_usd": usd.get("product"), "shipping_cost_usd": usd.get("shipping"),
-                    "fx": usd.get("quote"), "fx_cost_date": usd.get("cost_date"),
-                    "linked_transaction_id": row.get("_income_tx_id"),
-                    "match_status": "matched" if status in (STATUS_MATCHED, STATUS_WILL_UPDATE) else "unmatched",
-                    "source": "sellerflash",
-                    "last_seen_at": now, "last_updated_at": now,
+                    **scope, "seller_order_id": oid, "marketplace": item["mp"],
+                    "sellerflash_marketplace": row.get("marketplace", "") or (existing_sf or {}).get("sellerflash_marketplace", ""),
+                    **merged,
+                    "currency": "USD",
+                    "product_cost_usd": merged["product_cost"], "shipping_cost_usd": merged["initial_shipment_cost"],
+                    "fx": None, "fx_cost_date": None,
+                    "linked_transaction_id": (item["income_tx"] or {}).get("id") or (existing_sf or {}).get("linked_transaction_id"),
+                    "match_status": "unmatched" if status == STATUS_NOT_FOUND else "matched",
+                    "source": "sellerflash", "last_seen_at": now, "last_updated_at": now,
                     "last_import_batch_id": batch_id,
                 }
-                identity = {**scope, "marketplace": mp, "seller_order_id": row["seller_order_id"]}
-                if status == STATUS_ALREADY_IMPORTED:
-                    await db.sellerflash_costs.update_one(
-                        identity, {"$set": {"last_seen_at": now, "last_import_batch_id": batch_id}})
-                    continue
-                if status == STATUS_WILL_UPDATE and item["existing_sf"]:
-                    rec_id = item["existing_sf"]["id"]
-                    changes = row.get("_changes") or {}
+                if existing_sf:
+                    rec_id = existing_sf["id"]
                     await db.sellerflash_costs.update_one({"id": rec_id}, {"$set": record})
-                    if changes:
+                    if item["changed"]:
                         await db.sellerflash_history.insert_one({
                             "id": str(uuid.uuid4()), **scope, "sellerflash_cost_id": rec_id,
-                            "seller_order_id": row["seller_order_id"], "marketplace": mp,
-                            "changes": changes, "detected_at": now, "import_batch_id": batch_id})
-                    # Kullanıcı sonradan manuel değiştirmediyse maliyeti güncelle
-                    tx = None
-                    linked_id = item["existing_sf"].get("linked_transaction_id")
-                    if linked_id:
-                        tx = await db.transactions.find_one({"id": linked_id, **scope}, {"_id": 0})
-                    if not tx and item["income_tx"]:
-                        tx = item["income_tx"]
-                        await db.sellerflash_costs.update_one(
-                            {"id": rec_id}, {"$set": {"linked_transaction_id": tx["id"],
-                                                      "match_status": "matched"}})
-                    if tx and not _has_manual_costs(tx) and (usd.get("product") is not None or usd.get("shipping") is not None):
-                        await _apply_costs(db, scope, tx, usd, rec_id)
-                        applied += 1
-                    continue
-                # Yeni kayıt (matched / eksik maliyet / conflict / unmatched hepsi referans olarak saklanır)
-                rec_id = str(uuid.uuid4())
-                record["id"] = rec_id
-                await db.sellerflash_costs.update_one(
-                    identity, {"$set": {k: v for k, v in record.items() if k not in ("id", "first_imported_at")},
-                               "$setOnInsert": {"id": rec_id, "first_imported_at": now}},
-                    upsert=True)
-                if status == STATUS_MATCHED and item["income_tx"] and not _has_manual_costs(item["income_tx"]):
-                    await _apply_costs(db, scope, item["income_tx"], usd, rec_id)
+                            "seller_order_id": oid, "marketplace": item["mp"], "changes": item["changed"],
+                            "status": status, "detected_at": now, "import_batch_id": batch_id})
+                else:
+                    rec_id = str(uuid.uuid4())
+                    await db.sellerflash_costs.update_one(
+                        {**scope, "seller_order_id": oid},
+                        {"$set": record, "$setOnInsert": {"id": rec_id, "first_imported_at": now}}, upsert=True)
+                    rec_id = (await db.sellerflash_costs.find_one({**scope, "seller_order_id": oid}, {"id": 1}))["id"]
+                tx = item["income_tx"]
+                # Kâr yalnızca efektif ürün/kargo maliyeti gerçekten değişirse yeniden hesaplanır
+                if status in APPLY_STATUSES and tx and not _tx_in_sync(tx, rec_id, merged):
+                    await _apply_costs(db, scope, tx, {"product": merged["product_cost"],
+                                                       "shipping": merged["initial_shipment_cost"]}, rec_id)
                     applied += 1
-            marketplaces_seen = sorted({item["mp"] for item in plan if item["mp"]})
             await db.sellerflash_imports.insert_one({
                 "id": batch_id, **scope, "file_name": file.filename or "",
                 "file_type": file_type.lstrip("."), "uploaded_at": now,
-                "marketplaces": marketplaces_seen, "total_rows": len(rows),
-                "matched": counts["matched"], "new": counts["new"], "updated": counts["updated"],
+                "marketplaces": sorted({i["mp"] for i in plan if i["mp"]}), "total_rows": len(rows),
+                "matched": counts["matched"], "new": counts["new"],
+                "updated": counts["updated"] + counts["partial_completion"] + counts["restored"],
                 "unchanged": counts["unchanged"], "unmatched": counts["unmatched"],
                 "conflicts": counts["conflicts"], "rejected_count": len(issues),
                 "applied_costs": applied, "status": "completed",
             })
 
+        actionable = sum(1 for i in plan if i["status"] in APPLY_STATUSES)
         return SellerFlashImportOut(
-            total_rows=len(rows), matched=counts["matched"], new=counts["new"],
-            updated=counts["updated"], unchanged=counts["unchanged"],
-            unmatched=counts["unmatched"], conflicts=counts["conflicts"],
-            missing_product_cost=counts["missing_product_cost"],
-            missing_shipping_cost=counts["missing_shipping_cost"],
+            total_rows=len(rows), **counts, actionable=actionable,
             rejected_count=len(issues), issues=issues[:100],
             preview=preview[:200], committed=commit, batch_id=batch_id, applied_costs=applied)
 
@@ -348,11 +346,11 @@ def sellerflash_router(db, get_current_user, marketplaces):
         return [SellerFlashBatchOut(**d) for d in docs]
 
     @router.get("/sellerflash/costs")
-    async def sellerflash_cost_for_order(store_id: str, marketplace: str, order_id: str,
+    async def sellerflash_cost_for_order(store_id: str, order_id: str, marketplace: Optional[str] = None,
                                          user=Depends(get_current_user)):
+        # Order-ID-only: pazar yeri yalnızca görüntü bilgisidir
         doc = await db.sellerflash_costs.find_one(
-            {"user_id": user["id"], "store_id": store_id, "marketplace": marketplace,
-             "seller_order_id": order_id}, {"_id": 0})
+            {"user_id": user["id"], "store_id": store_id, "seller_order_id": order_id}, {"_id": 0})
         return {"found": bool(doc), "record": doc}
 
     @router.get("/sellerflash/unmatched")
@@ -367,11 +365,8 @@ def sellerflash_router(db, get_current_user, marketplaces):
 
 
 async def _apply_costs(db, scope, tx, usd, rec_id):
-    """SellerFlash maliyetlerini siparişin gelir kaydına USD snapshot ile uygular.
-
-    Ayrı finansal işlem oluşturulmaz; mevcut canonical kaydın maliyet alanları
-    tek sefer yazılır. Manuel maliyetler çağıran tarafça zaten korunur.
-    """
+    """SellerFlash USD maliyetlerini siparişin gelir kaydına uygular (ayrı işlem oluşturmaz).
+    Yalnızca değeri olan alan yazılır; eksik alan mevcut değeri korur."""
     if tx.get("fulfillment_type") == "FBA":
         return  # FBA maliyeti yalnızca FBA FIFO lotlarından gelir
     usd_costs = dict(tx.get("usd_costs") or {})
@@ -392,6 +387,7 @@ async def _apply_costs(db, scope, tx, usd, rec_id):
 async def initialize_sellerflash_indexes(db):
     await db.sellerflash_costs.create_index(
         [("user_id", 1), ("store_id", 1), ("marketplace", 1), ("seller_order_id", 1)], unique=True)
+    await db.sellerflash_costs.create_index([("user_id", 1), ("store_id", 1), ("seller_order_id", 1)])
     await db.sellerflash_costs.create_index([("user_id", 1), ("match_status", 1)])
     await db.sellerflash_history.create_index([("user_id", 1), ("seller_order_id", 1)])
     await db.sellerflash_imports.create_index([("user_id", 1), ("uploaded_at", -1)])
