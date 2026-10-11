@@ -680,3 +680,9 @@
 ##         -working: NA
 ##         -agent: "main"
 ##         -comment: "Minimal checks: backend logs showed ZERO /api/auth/login attempts (request never reached backend); admin user EXISTS in amazon_seller_suite with bcrypt hash validating admin123; JWT_SECRET present; CORS_ORIGINS matches current preview origin. ROOT CAUSE: frontend supervisor process had auto-started BEFORE frontend/.env was recreated during import, so the running dev server had REACT_APP_BACKEND_URL=undefined and login calls never left the browser. MINIMAL FIX: restarted frontend only (no code/config changes). Verification: single POST /api/auth/login via preview URL with Origin header returned 200 + correct ACAO + allow-credentials + HttpOnly cookie + token. Browser login test pending (testing agent)."
+##         -working: false
+##         -agent: "user"
+##         -comment: "Login STILL fails with 'Giriş başarısız' on the user's CURRENT preview URL despite previous test success."
+##         -working: true
+##         -agent: "main"
+##         -comment: "Reproduced in real browser at the URL the user actually uses: https://seller-finance-tool-2.preview.emergentagent.com (friendly alias, also mapped to this workspace). Browser POST went to correct backend (UUID URL) but CORS preflight OPTIONS from alias origin returned 400 (backend logs) -> browser blocked login (net::ERR_FAILED). ROOT CAUSE: CORS_ORIGINS only contained the UUID origin; alias origin missing. MINIMAL FIX: added https://seller-finance-tool-2.preview.emergentagent.com to backend/.env CORS_ORIGINS + backend restart (env-only, no code). VERIFIED in real browser at the SAME alias URL: POST /api/auth/login -> HTTP 200, no error toast, navigated to Dashboard, dashboard content loaded. Admin user untouched (existed, bcrypt hash valid)."
