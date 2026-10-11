@@ -25,6 +25,7 @@ Import and run existing project from GitHub (repo: harune563-alt/seller-finance-
 ## Notes
 - This pod has a FRESH MongoDB (no previous app data; old environment data not migrated)
 - Broad regression suite intentionally not run per user instruction
+- 2026-10-11 Login fix: user preview is the alias origin https://amz-finance-suite.preview.emergentagent.com; it was missing from backend CORS_ORIGINS → browser blocked the login preflight (no request ever reached backend). Env-only fix: added alias origin to CORS_ORIGINS, restarted backend. Verified in real browser on the alias URL: login 200 → Dashboard loads.
 
 ## Backlog
 - P0: none — ready for next development task
