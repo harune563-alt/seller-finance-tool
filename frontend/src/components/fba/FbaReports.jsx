@@ -1,7 +1,10 @@
 import { TableCard, THead, Td, EmptyRow, Metric, usd, pct, tone } from "@/components/fba/common";
 
 const ASIN_COLS = [["ASIN"], ["Ürün"], ["SKU(lar)"], ["Sipariş", true], ["Adet", true], ["Amazon Net", true], ["Ürün Maliyeti", true],
-  ["Inbound", true], ["Toplam FBA", true], ["Net Kâr/Zarar", true], ["Marj %", true]];
+  ["Inbound", true], ["Toplam FBA", true], ["Net Kâr/Zarar", true], ["Marj %", true],
+  ["PPC Harcama", true], ["PPC Sonrası Net", true], ["PPC Sonrası Marj %", true], ["PPC Satış", true], ["ACoS %", true], ["ROAS", true]];
+
+const roas = v => v == null ? "—" : `${Number(v).toFixed(2)}x`;
 
 export const AsinReport = ({ rows, summary }) => (
   <div className="space-y-4" data-testid="fba-asin-report">
@@ -15,6 +18,9 @@ export const AsinReport = ({ rows, summary }) => (
       <Metric label="Toplam Net Kâr/Zarar" value={usd(summary.net_profit_usd)} valueClass={tone(summary.net_profit_usd)} testId="fba-gen-net" />
       <Metric label="Genel Kâr Marjı" value={pct(summary.margin_percent)} valueClass={tone(summary.margin_percent)} testId="fba-gen-margin" />
     </div>}
+    <p className="text-xs text-slate-400" data-testid="fba-asin-ppc-note">
+      PPC harcaması yalnızca ASIN analizinde kârı düşürür; finansal gider zaten Amazon Payments hesabında sayıldığı için genel giderlere ikinci kez eklenmez.
+    </p>
     <TableCard testId="fba-asin-table">
       <THead cols={ASIN_COLS} />
       <tbody>
@@ -32,6 +38,12 @@ export const AsinReport = ({ rows, summary }) => (
             <Td right>{usd(r.total_fba_cost_usd)}</Td>
             <Td right className={tone(r.net_profit_usd)}>{usd(r.net_profit_usd)}</Td>
             <Td right className={tone(r.margin_percent)}>{pct(r.margin_percent)}</Td>
+            <Td right className="text-rose-700" data-testid={`fba-asin-ppc-${r.asin}`}>{usd(r.ppc_spend_usd)}</Td>
+            <Td right className={tone(r.net_profit_after_ppc_usd)} data-testid={`fba-asin-net-ppc-${r.asin}`}>{usd(r.net_profit_after_ppc_usd)}</Td>
+            <Td right className={tone(r.margin_after_ppc_percent)}>{pct(r.margin_after_ppc_percent)}</Td>
+            <Td right>{usd(r.ppc_sales_usd)}</Td>
+            <Td right>{r.acos_percent == null ? "—" : pct(r.acos_percent)}</Td>
+            <Td right>{roas(r.roas)}</Td>
           </tr>
         ))}
       </tbody>

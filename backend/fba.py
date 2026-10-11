@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field, field_validator
 from pymongo import UpdateMany
 
 from amazon_orders_import import is_active_item
-from usd_ledger import enrich_records
+from usd_ledger import attach_usd, enrich_records
+from fx_service import FxError
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,56 @@ class ReallocateIn(BaseModel):
     store_id: str
     order_id: str = Field(min_length=1, max_length=100)
     note: str = Field(default="", max_length=500)
+
+
+class ManualSaleIn(BaseModel):
+    store_id: str
+    marketplace: str = Field(min_length=1, max_length=10)
+    sku: str = Field(min_length=1, max_length=200)
+    asin: str = Field(default="", max_length=40)
+    product_name: str = Field(default="", max_length=500)
+    quantity: int = Field(gt=0, le=1_000_000)
+    amount: float = Field(gt=0, le=1_000_000_000, allow_inf_nan=False)
+    order_id: str = Field(default="", max_length=100)
+    date: str
+
+    @field_validator("sku", "asin", "product_name", "marketplace", "order_id", mode="before")
+    @classmethod
+    def strip(cls, v):
+        return (v or "").strip() if isinstance(v, str) or v is None else v
+
+    @field_validator("date")
+    @classmethod
+    def valid_date(cls, v):
+        return calendar_date.fromisoformat(v).isoformat()
+
+
+def preview_fifo(lots, quantity):
+    """Non-consuming FIFO walk over open lots (oldest purchase first). Returns the
+    planned split and total landed cost without touching inventory."""
+    available = sum(l["remaining_quantity"] for l in lots)
+    need, allocations = quantity, []
+    product = inbound = Decimal(0)
+    for lot in lots:
+        if need <= 0:
+            break
+        take = min(need, lot["remaining_quantity"])
+        p = q2(D(lot["product_unit_cost_usd"]) * take)
+        landed = q2(D(lot["landed_unit_cost_usd"]) * take)
+        allocations.append({
+            "lot_id": lot["id"], "lot_code": lot.get("lot_code", ""), "quantity": take,
+            "purchase_date": lot.get("purchase_date", ""),
+            "landed_unit_cost_usd": lot["landed_unit_cost_usd"],
+            "product_cost_usd": float(p), "inbound_cost_usd": float(q2(landed - p)),
+            "total_cost_usd": float(landed)})
+        product += p
+        inbound += (landed - p)
+        need -= take
+    return {"requested_quantity": quantity, "available_stock": available,
+            "sufficient": available >= quantity, "shortfall": max(0, quantity - available),
+            "allocations": allocations, "product_cost_usd": float(q2(product)),
+            "inbound_cost_usd": float(q2(inbound)),
+            "total_fifo_cost_usd": float(q2(product + inbound))}
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +360,8 @@ def summary_totals(rows):
             "fx_pending_orders": sum(1 for r in rows if r["amazon_net_usd"] is None)}
 
 
-def asin_report(rows):
+def asin_report(rows, ppc_map=None):
+    ppc_map = ppc_map or {}
     buckets = {}
     for r in rows:
         o, allocs = r["_order"], r["_allocs"]
@@ -333,16 +385,32 @@ def asin_report(rows):
                 if (a.get("order_item_id") or "") == (it.get("order_item_id") or ""):
                     b["product"] += D(a["allocated_product_cost_usd"])
                     b["inbound"] += D(a["allocated_inbound_cost_usd"])
+    # Attribution-only PPC spend may cover ASINs with no FBA sale in the window.
+    for asin in ppc_map:
+        if asin not in buckets:
+            buckets[asin] = {"asin": asin, "product_name": "", "skus": set(), "orders": set(),
+                             "units_sold": 0, "revenue": Decimal(0), "product": Decimal(0),
+                             "inbound": Decimal(0), "extra": Decimal(0)}
     out = []
     for b in buckets.values():
         total = b["product"] + b["inbound"]
         net = b["revenue"] - total - b["extra"]
+        ppc = ppc_map.get(b["asin"], {})
+        ppc_spend = D(ppc.get("spend", 0))
+        ppc_sales = D(ppc.get("sales", 0))
+        net_after_ppc = net - ppc_spend
         out.append({"asin": b["asin"], "product_name": b["product_name"], "skus": sorted(b["skus"]),
                     "orders": len(b["orders"]), "units_sold": b["units_sold"],
                     "amazon_net_revenue_usd": float(q2(b["revenue"])), "product_cost_usd": float(q2(b["product"])),
                     "inbound_cost_usd": float(q2(b["inbound"])), "total_fba_cost_usd": float(q2(total)),
                     "extra_cost_usd": float(q2(b["extra"])), "net_profit_usd": float(q2(net)),
-                    "margin_percent": float(q2(net / b["revenue"] * 100)) if b["revenue"] else None})
+                    "margin_percent": float(q2(net / b["revenue"] * 100)) if b["revenue"] else None,
+                    # PPC attribution lane (spend is NOT a new expense; it only reduces ASIN analysis).
+                    "ppc_spend_usd": float(q2(ppc_spend)), "ppc_sales_usd": float(q2(ppc_sales)),
+                    "net_profit_after_ppc_usd": float(q2(net_after_ppc)),
+                    "margin_after_ppc_percent": float(q2(net_after_ppc / b["revenue"] * 100)) if b["revenue"] else None,
+                    "acos_percent": float(q2(ppc_spend / ppc_sales * 100)) if ppc_sales else None,
+                    "roas": float(q2(ppc_sales / ppc_spend)) if ppc_spend else None})
     return sorted(out, key=lambda x: -x["amazon_net_revenue_usd"])
 
 
@@ -397,8 +465,9 @@ async def inventory_cash_flow_metrics(db, user_id, store_id, start=None, end=Non
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
-def fba_router(db, get_current_user):
+def fba_router(db, get_current_user, marketplaces=None):
     router = APIRouter(prefix="/fba", tags=["fba"])
+    MARKETPLACES = marketplaces or {}
 
     async def own_store(store_id, user):
         store = await db.stores.find_one({"id": store_id, "user_id": user["id"]}, {"_id": 0})
@@ -568,7 +637,21 @@ def fba_router(db, get_current_user):
         inv = await inventory_report(db, user["id"], store_id)
         summary = {**summary_totals(rows), "inventory_units": inv["totals"]["remaining_units"],
                    "inventory_value_usd": inv["totals"]["inventory_value_usd"]}
-        asin = asin_report(rows)
+        # PPC attribution overlay (reads ppc_attributions only; never an expense).
+        ppc_map = {}
+        async for rec in db.ppc_attributions.find(
+                {"user_id": user["id"], "store_id": store_id}, {"_id": 0}):
+            if start_date and rec.get("date", "") < start_date:
+                continue
+            if end_date and rec.get("date", "") > end_date:
+                continue
+            if marketplace and marketplace != "ALL" and rec.get("marketplace") != marketplace:
+                continue
+            asin = (rec.get("asin") or "—").strip() or "—"
+            b = ppc_map.setdefault(asin, {"spend": Decimal(0), "sales": Decimal(0)})
+            b["spend"] += D(rec.get("ad_spend_usd"))
+            b["sales"] += D(rec.get("ppc_sales_usd"))
+        asin = asin_report(rows, ppc_map)
         for r in rows:
             r.pop("_order"), r.pop("_allocs")
         rows.sort(key=lambda r: (r["date"], r["order_id"]), reverse=True)
@@ -584,6 +667,123 @@ def fba_router(db, get_current_user):
                                 end_date: Optional[str] = Query(None), user=Depends(get_current_user)):
         await own_store(store_id, user)
         return await inventory_cash_flow_metrics(db, user["id"], store_id, start_date, end_date)
+
+    async def open_lots_for_sku(user_id, store_id, sku):
+        return await db.fba_lots.find(
+            {"user_id": user_id, "store_id": store_id, "sku": sku, "lot_status": OPEN,
+             "remaining_quantity": {"$gt": 0}}, {"_id": 0}) \
+            .sort([("purchase_date", 1), ("created_at", 1)]).to_list(None)
+
+    @router.get("/sku-lookup")
+    async def sku_lookup(store_id: str, sku: str, quantity: int = Query(0, ge=0),
+                         user=Depends(get_current_user)):
+        """Resolve ASIN / product name / remaining FBA stock / open lots for a SKU,
+        plus an optional FIFO cost preview — so manual FBA sales need no manual cost."""
+        await own_store(store_id, user)
+        sku = (sku or "").strip()
+        all_lots = await db.fba_lots.find(
+            {"user_id": user["id"], "store_id": store_id, "sku": sku}, {"_id": 0}) \
+            .sort([("purchase_date", 1), ("created_at", 1)]).to_list(None)
+        open_lots = [l for l in all_lots if l["lot_status"] == OPEN and l["remaining_quantity"] > 0]
+        asin = next((l.get("asin") for l in all_lots if l.get("asin")), "")
+        product_name = next((l.get("product_name") for l in all_lots if l.get("product_name")), "")
+        remaining = sum(l["remaining_quantity"] for l in open_lots)
+        preview = preview_fifo(open_lots, quantity) if quantity > 0 else None
+        return {"sku": sku, "asin": asin, "product_name": product_name,
+                "remaining_units": remaining, "open_lots": len(open_lots),
+                "lots": [{"lot_id": l["id"], "lot_code": l.get("lot_code", ""),
+                          "remaining_quantity": l["remaining_quantity"],
+                          "landed_unit_cost_usd": l["landed_unit_cost_usd"],
+                          "purchase_date": l.get("purchase_date", "")} for l in open_lots],
+                "fifo_preview": preview}
+
+    @router.get("/asin-lookup")
+    async def asin_lookup(store_id: str, asin: str, user=Depends(get_current_user)):
+        await own_store(store_id, user)
+        asin = (asin or "").strip()
+        lots = await db.fba_lots.find(
+            {"user_id": user["id"], "store_id": store_id, "asin": asin}, {"_id": 0}).to_list(None)
+        skus = {}
+        for l in lots:
+            s = skus.setdefault(l["sku"], {"sku": l["sku"], "product_name": l.get("product_name", ""),
+                                           "remaining_units": 0, "open_lots": 0})
+            if l["lot_status"] == OPEN and l["remaining_quantity"] > 0:
+                s["remaining_units"] += l["remaining_quantity"]
+                s["open_lots"] += 1
+        return {"asin": asin, "skus": sorted(skus.values(), key=lambda x: -x["remaining_units"])}
+
+    @router.get("/fifo-preview")
+    async def fifo_preview_endpoint(store_id: str, sku: str, quantity: int = Query(..., gt=0),
+                                    user=Depends(get_current_user)):
+        await own_store(store_id, user)
+        lots = await open_lots_for_sku(user["id"], store_id, (sku or "").strip())
+        return preview_fifo(lots, quantity)
+
+    @router.post("/manual-sale", status_code=201)
+    async def manual_sale(data: ManualSaleIn, user=Depends(get_current_user)):
+        """Create a manual FBA sale that behaves exactly like an imported FBA sale:
+        an income transaction (source=MANUAL_FBA) + an FBA order-item, then the shared
+        FIFO pass consumes inventory and sets realized COGS. No manual cost needed."""
+        store = await own_store(data.store_id, user)
+        if data.marketplace not in store["marketplaces"] or data.marketplace not in MARKETPLACES:
+            raise HTTPException(400, "Bu pazar yeri seçili mağazaya ait değil")
+        async with _locks[(user["id"], data.store_id)]:
+            lots = await open_lots_for_sku(user["id"], data.store_id, data.sku)
+            preview = preview_fifo(lots, data.quantity)
+            if not preview["sufficient"]:
+                raise HTTPException(409, {"error": "Yetersiz FBA stok (Insufficient FBA Stock)",
+                                          "requested": data.quantity,
+                                          "available": preview["available_stock"]})
+            order_id = data.order_id or f"MANUAL-{uuid.uuid4().hex[:10].upper()}"
+            # Idempotency: a supplied Order ID must not create a duplicate manual sale.
+            if data.order_id:
+                existing = await db.transactions.find_one(
+                    {"user_id": user["id"], "store_id": data.store_id, "order_id": order_id,
+                     "source": "MANUAL_FBA"}, {"_id": 0, "id": 1})
+                if existing:
+                    raise HTTPException(409, "Bu Order ID ile manuel FBA satışı zaten var")
+            now = now_iso()
+            currency = MARKETPLACES[data.marketplace]["currency"]
+            asin = data.asin or next((l.get("asin") for l in lots if l.get("asin")), "")
+            product_name = data.product_name or next((l.get("product_name") for l in lots if l.get("product_name")), "")
+            tid = str(uuid.uuid4())
+            doc = {
+                "id": tid, "user_id": user["id"], "store_id": data.store_id,
+                "marketplace": data.marketplace, "type": "income", "category": "Order payments",
+                "amount": float(q2(data.amount)), "currency": currency, "cost_currency": "USD",
+                "date": data.date, "description": f"Manuel FBA satışı · {data.sku}",
+                "order_id": order_id, "sku": data.sku, "quantity": str(data.quantity),
+                "section": "general", "source": "MANUAL_FBA", "fulfillment_type": "FBA",
+                "fulfillment_last_updated_at": now, "created_at": now,
+                "original_transaction_date": data.date, "latest_amazon_reported_date": data.date,
+                "date_changed": False,
+            }
+            try:
+                doc = await attach_usd(db, doc)
+            except FxError as exc:
+                raise HTTPException(422, str(exc))
+            await db.transactions.insert_one(doc)
+            item_id = f"MANUAL-ITEM-{uuid.uuid4().hex[:10].upper()}"
+            await db.amazon_order_items.update_one(
+                {"user_id": user["id"], "amazon_order_id": order_id, "order_item_id": item_id},
+                {"$set": {"user_id": user["id"], "amazon_order_id": order_id, "order_item_id": item_id,
+                          "store_id": data.store_id, "marketplace": data.marketplace,
+                          "sku": data.sku, "asin": asin, "product_name": product_name,
+                          "quantity": data.quantity, "item_status": "Shipped", "order_status": "Shipped",
+                          "fulfillment_channel": "AFN", "resolved_fulfillment": "FBA",
+                          "purchase_date": data.date, "currency": currency,
+                          "match_status": "matched", "source": "MANUAL_FBA", "last_seen_at": now},
+                 "$setOnInsert": {"id": str(uuid.uuid4()), "first_imported_at": now}},
+                upsert=True)
+            # Link the item onto the financial row (same shape the importer uses).
+            await db.transactions.update_one(
+                {"id": tid, "user_id": user["id"]},
+                {"$set": {"amazon_order_item_ids": [item_id]}})
+        result = await allocate_store(db, user["id"], data.store_id)
+        tx = await db.transactions.find_one({"id": tid, "user_id": user["id"]}, {"_id": 0, "user_id": 0})
+        return {"order_id": order_id, "transaction_id": tid,
+                "created_allocations": result["created_allocations"],
+                "fba_fifo": tx.get("fba_fifo"), "fifo_preview": preview, "transaction": tx}
 
     return router
 

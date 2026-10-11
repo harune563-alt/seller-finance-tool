@@ -48,6 +48,7 @@ from fba import fba_router, initialize_fba_indexes, allocate_user_stores
 from fba_stock import fba_stock_router
 from dashboard_insights import dashboard_router
 from cashflow import cashflow_router, initialize_cashflow_indexes
+from ppc import ppc_router, initialize_ppc_indexes
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -1024,9 +1025,10 @@ api.include_router(report_router(db, get_current_user))
 api.include_router(sellerflash_router(db, get_current_user, MARKETPLACES))
 api.include_router(amazon_orders_router(db, get_current_user))
 api.include_router(fba_stock_router(db, get_current_user))
-api.include_router(fba_router(db, get_current_user))
+api.include_router(fba_router(db, get_current_user, MARKETPLACES))
 api.include_router(dashboard_router(db, get_current_user))
 api.include_router(cashflow_router(db, get_current_user, MARKETPLACES))
+api.include_router(ppc_router(db, get_current_user, MARKETPLACES))
 app.include_router(api)
 
 @app.middleware("http")
@@ -1076,6 +1078,7 @@ async def startup():
     await initialize_amazon_orders_import_indexes(db)
     await initialize_fba_indexes(db)
     await initialize_cashflow_indexes(db)
+    await initialize_ppc_indexes(db)
     for uid in await db.transactions.distinct("user_id", {"fulfillment_type": "FBA"}):
         await allocate_user_stores(db, uid)
     registered_orders = await backfill_amazon_orders(db)

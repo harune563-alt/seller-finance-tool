@@ -10,7 +10,7 @@ import {
 import {
   LayoutDashboard, Receipt, Wallet, FileBarChart2, Store as StoreIcon,
   LogOut, ChevronDown, Globe, Landmark, Package, Megaphone, Settings,
-  FileSpreadsheet, Truck, ArrowLeftRight,
+  FileSpreadsheet, Truck, ArrowLeftRight, Target,
 } from "lucide-react";
 
 const nav = [
@@ -19,6 +19,7 @@ const nav = [
   { to: "/cashflow", label: "Nakit Akışı", icon: ArrowLeftRight, testId: "nav-cashflow" },
   { to: "/fba", label: "FBA Takibi", icon: Package, testId: "nav-fba" },
   { to: "/ppc", label: "PPC Reklam", icon: Megaphone, testId: "nav-ppc" },
+  { to: "/ppc-attribution", label: "PPC Attribution", icon: Target, testId: "nav-ppc-attribution" },
   { to: "/payouts", label: "Amazon Ödemeleri", icon: Wallet, testId: "nav-payouts" },
   { to: "/sellerflash", label: "SellerFlash İçe Aktarma", icon: FileSpreadsheet, testId: "nav-sellerflash" },
   { to: "/amazon-orders", label: "Amazon Orders / Fulfillment Import", icon: Truck, testId: "nav-amazon-orders" },

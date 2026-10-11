@@ -23,6 +23,7 @@ import SellerFlashImport from "@/pages/SellerFlashImport";
 import AmazonOrdersImport from "@/pages/AmazonOrdersImport";
 import FbaTracking from "@/pages/FbaTracking";
 import CashFlow from "@/pages/CashFlow";
+import PpcAttribution from "@/pages/PpcAttribution";
 
 function App() {
   return (
@@ -38,6 +39,7 @@ function App() {
               <Route path="/fba" element={<FbaTracking />} />
               <Route path="/cashflow" element={<CashFlow />} />
               <Route path="/ppc" element={<SectionLedger section="ppc" title="PPC Reklam Takibi" subtitle="Kampanya başına tıklama / gösterim / sipariş" />} />
+              <Route path="/ppc-attribution" element={<PpcAttribution />} />
               <Route path="/payouts" element={<Payouts />} />
               <Route path="/sellerflash" element={<SellerFlashImport />} />
               <Route path="/amazon-orders" element={<AmazonOrdersImport />} />

@@ -8,6 +8,7 @@ import { FbaOverview } from "@/components/fba/FbaOverview";
 import { FbaOrdersTable } from "@/components/fba/FbaOrdersTable";
 import { FbaLotsPanel } from "@/components/fba/FbaLotsPanel";
 import { AsinReport, InventoryReport } from "@/components/fba/FbaReports";
+import { ManualFbaSale } from "@/components/fba/ManualFbaSale";
 import { StockAlerts } from "@/components/fba/StockStatus";
 import SectionLedger from "@/pages/SectionLedger";
 
@@ -66,7 +67,8 @@ export default function FbaTracking() {
         <TabsContent value="inventory" className="mt-4">
           <InventoryReport data={inventory} />
         </TabsContent>
-        <TabsContent value="manual" className="mt-4">
+        <TabsContent value="manual" className="mt-4 space-y-4">
+          <ManualFbaSale storeId={activeStoreId} marketplaces={activeStore?.marketplaces || []} onSaved={load} />
           <SectionLedger section="fba" title="Manuel FBA Kayıtları" subtitle="FBA gelir ve giderleri (önceki kayıt ekranı)" />
         </TabsContent>
       </Tabs>
