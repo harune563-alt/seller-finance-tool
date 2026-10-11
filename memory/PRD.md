@@ -260,3 +260,10 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - FIFO per (user, store, SKU), oldest purchase_date first; idempotent pass on lot create/adjust, GET /fba/orders, All Orders import commit.
 - SellerFlash _apply_costs skips FBA rows. Frontend: pages/FbaTracking.jsx, components/fba/*, FbaProfitStrip on Income/Expense.
 - Tests: backend/tests/test_fba_fifo.py (run with -n0).
+
+## 2026-10-11 — Lot CSV import, low stock, store-scoped dashboard
+- backend/fba_stock.py: POST /api/fba/lots/import (csv/xlsx, preview/commit; identity SKU+Lot Reference or SKU+Purchase Date), GET /api/fba/stock-status, PUT /api/fba/thresholds (fba_stock_thresholds).
+- backend/dashboard_insights.py: GET /api/dashboard/insights (store_id ALL|id, marketplace, dates) — FBA/FBM/unclassified via summary_usd, order count, FBA inventory value, top/bottom ASINs, low stock.
+- Frontend: Dashboard rewritten (own store/marketplace/date filters), components/dashboard/*, fba/LotImportDialog, fba/StockStatus.
+- Tests: backend/tests/test_fba_stock_dashboard.py (-n0).
+- Next: Cash Flow module (cash in/out, inventory purchases vs FIFO COGS; use fba.inventory_cash_flow_metrics).

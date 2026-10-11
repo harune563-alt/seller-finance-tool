@@ -45,6 +45,8 @@ from amazon_orders_import import (
     amazon_orders_router, initialize_amazon_orders_import_indexes,
 )
 from fba import fba_router, initialize_fba_indexes, allocate_user_stores
+from fba_stock import fba_stock_router
+from dashboard_insights import dashboard_router
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -1020,7 +1022,9 @@ api.include_router(category_router(db, get_current_user))
 api.include_router(report_router(db, get_current_user))
 api.include_router(sellerflash_router(db, get_current_user, MARKETPLACES))
 api.include_router(amazon_orders_router(db, get_current_user))
+api.include_router(fba_stock_router(db, get_current_user))
 api.include_router(fba_router(db, get_current_user))
+api.include_router(dashboard_router(db, get_current_user))
 app.include_router(api)
 
 @app.middleware("http")

@@ -596,3 +596,4 @@ async def initialize_fba_indexes(db):
     await db.fba_allocations.create_index([("user_id", 1), ("store_id", 1), ("amazon_order_id", 1), ("status", 1)])
     await db.fba_allocations.create_index([("lot_id", 1), ("status", 1)])
     await db.fba_lot_adjustments.create_index([("lot_id", 1), ("timestamp", -1)])
+    await db.fba_stock_thresholds.create_index([("user_id", 1), ("store_id", 1), ("sku", 1)], unique=True)

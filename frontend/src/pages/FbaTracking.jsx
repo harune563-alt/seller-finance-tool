@@ -8,6 +8,7 @@ import { FbaOverview } from "@/components/fba/FbaOverview";
 import { FbaOrdersTable } from "@/components/fba/FbaOrdersTable";
 import { FbaLotsPanel } from "@/components/fba/FbaLotsPanel";
 import { AsinReport, InventoryReport } from "@/components/fba/FbaReports";
+import { StockAlerts } from "@/components/fba/StockStatus";
 import SectionLedger from "@/pages/SectionLedger";
 
 const TABS = [["overview", "FBA Genel Bakış"], ["orders", "FBA Siparişleri"], ["lots", "FBA Stok Lotları"], ["asin", "ASIN Kâr Raporu"], ["inventory", "Stok Değeri Raporu"], ["manual", "Manuel FBA Kayıtları"]];
@@ -18,6 +19,7 @@ export default function FbaTracking() {
   const [report, setReport] = useState(null);
   const [lots, setLots] = useState([]);
   const [inventory, setInventory] = useState(null);
+  const [stock, setStock] = useState([]);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
@@ -25,10 +27,11 @@ export default function FbaTracking() {
     setLoading(true);
     try {
       const params = { store_id: activeStoreId, start_date: filters.start, end_date: filters.end, marketplace: filters.marketplace };
-      const [o, l, i] = await Promise.all([
+      const [o, l, i, st] = await Promise.all([
         api.get("/fba/orders", { params }), api.get("/fba/lots", { params: { store_id: activeStoreId } }), api.get("/fba/inventory", { params: { store_id: activeStoreId } }),
+        api.get("/fba/stock-status", { params: { store_id: activeStoreId } }),
       ]);
-      setReport(o.data); setLots(l.data); setInventory(i.data);
+      setReport(o.data); setLots(l.data); setInventory(i.data); setStock(st.data);
     } finally { setLoading(false); }
   }, [activeStoreId, filters]);
   useEffect(() => { load(); }, [load]);
@@ -46,6 +49,7 @@ export default function FbaTracking() {
         </TabsList>
         <TabsContent value="overview" className="space-y-4 mt-4">
           <FbaFilters value={filters} onChange={setFilters} marketplaces={activeStore?.marketplaces || []} />
+          <StockAlerts rows={stock} />
           <FbaOverview summary={report?.summary} />
         </TabsContent>
         <TabsContent value="orders" className="space-y-4 mt-4">
@@ -53,7 +57,7 @@ export default function FbaTracking() {
           <FbaOrdersTable orders={report?.orders || []} />
         </TabsContent>
         <TabsContent value="lots" className="mt-4">
-          <FbaLotsPanel lots={lots} storeId={activeStoreId} marketplaces={activeStore?.marketplaces || []} onChanged={load} />
+          <FbaLotsPanel lots={lots} stock={stock} storeId={activeStoreId} marketplaces={activeStore?.marketplaces || []} onChanged={load} />
         </TabsContent>
         <TabsContent value="asin" className="space-y-4 mt-4">
           <FbaFilters value={filters} onChange={setFilters} marketplaces={activeStore?.marketplaces || []} />
