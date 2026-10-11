@@ -253,3 +253,10 @@ Bu verilerden birleşik gelir, gider ve net kâr göster. Amazon Payments CSV ra
 - Uygulama kaynak kodu, Amazon Payments CSV mantığı, idempotency/tarih koruma, SellerFlash maliyet import/reconciliation, auth, raporlar ve finans hesaplamaları DEĞİŞTİRİLMEDİ; hiçbir kullanıcı verisi değiştirilmedi.
 - Doğrulama: backend testing agent 18/18 test geçti (servis durumu, MongoDB 19 koleksiyon, env, CORS eşleşmesi, login/session, dashboard/stores, TRY/USD FX, Amazon CSV idempotency + tarih koruma regresyonu, SellerFlash endpoint kayıtları). Frontend testing agent 9/9 geçti (login, dashboard, navigasyon: İşlemler/Amazon Ödemeleri/Mağazalar/Sermaye & Kasa/SellerFlash sayfası, CSV İçe Aktar dialog yapısı, 390px ve 1920px taşmasız responsive, konsol/CORS temiz, session kalıcılığı, logout→login yönlendirmesi).
 - Test dosyaları: /app/continuation_runtime_test.py, /app/continuation_regression_test.py. MOCK yok. Açık sorun yok.
+
+## 2026-10-11 — FBA Tracking + FIFO Inventory Costing
+- backend/fba.py: fba_lots, fba_allocations (permanent FIFO audit), fba_lot_adjustments; routes /api/fba/{lots,lots/{id},lots/{id}/adjust,lots/{id}/history,allocate,orders,orders/reallocate,inventory,cash-flow-metrics}.
+- FBA orders = existing transactions with fulfillment_type=FBA + amazon_order_items (FBA, active). No new transactions; only `fba_fifo` metadata on existing rows.
+- FIFO per (user, store, SKU), oldest purchase_date first; idempotent pass on lot create/adjust, GET /fba/orders, All Orders import commit.
+- SellerFlash _apply_costs skips FBA rows. Frontend: pages/FbaTracking.jsx, components/fba/*, FbaProfitStrip on Income/Expense.
+- Tests: backend/tests/test_fba_fifo.py (run with -n0).

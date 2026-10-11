@@ -44,6 +44,7 @@ from sellerflash_routes import (
 from amazon_orders_import import (
     amazon_orders_router, initialize_amazon_orders_import_indexes,
 )
+from fba import fba_router, initialize_fba_indexes
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -227,6 +228,8 @@ class TransactionOut(TransactionIn):
     fulfillment_type: Optional[str] = None
     fulfillment_last_updated_at: Optional[str] = None
     amazon_order_item_ids: Optional[List[str]] = None
+    # Additive FBA FIFO cost/profit metadata (never changes amounts).
+    fba_fifo: Optional[dict] = None
 
 
 class SummaryBucket(BaseModel):
@@ -1017,6 +1020,7 @@ api.include_router(category_router(db, get_current_user))
 api.include_router(report_router(db, get_current_user))
 api.include_router(sellerflash_router(db, get_current_user, MARKETPLACES))
 api.include_router(amazon_orders_router(db, get_current_user))
+api.include_router(fba_router(db, get_current_user))
 app.include_router(api)
 
 @app.middleware("http")
@@ -1064,6 +1068,7 @@ async def startup():
     # SellerFlash (Faz B): indexes + canonical order registry from pre-existing rows.
     await initialize_sellerflash_indexes(db)
     await initialize_amazon_orders_import_indexes(db)
+    await initialize_fba_indexes(db)
     registered_orders = await backfill_amazon_orders(db)
     if registered_orders:
         logger.info("Canonical order registry holds %s orders", registered_orders)

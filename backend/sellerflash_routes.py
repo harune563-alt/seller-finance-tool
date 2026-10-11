@@ -372,6 +372,8 @@ async def _apply_costs(db, scope, tx, usd, rec_id):
     Ayrı finansal işlem oluşturulmaz; mevcut canonical kaydın maliyet alanları
     tek sefer yazılır. Manuel maliyetler çağıran tarafça zaten korunur.
     """
+    if tx.get("fulfillment_type") == "FBA":
+        return  # FBA maliyeti yalnızca FBA FIFO lotlarından gelir
     usd_costs = dict(tx.get("usd_costs") or {})
     for key in ("product_cost", "shipping_cost", "extra_cost",
                 "product_cost_recovery", "shipping_cost_recovery"):

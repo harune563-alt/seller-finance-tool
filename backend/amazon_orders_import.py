@@ -10,6 +10,7 @@ Eşleştirme: yalnızca amazon-order-id (pazar yeri gerekmez).
 import csv
 import hashlib
 import io
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -473,6 +474,12 @@ def amazon_orders_router(db, get_current_user):
                 "mixed_orders": mixed_orders, "rejected_count": len(issues),
                 "status": "completed",
             })
+            # FBA FIFO maliyet tahsisi (yalnızca meta veri; finansal işlem oluşturmaz)
+            from fba import allocate_user_stores
+            try:
+                await allocate_user_stores(db, user["id"])
+            except Exception:
+                logging.getLogger(__name__).exception("FBA FIFO allocation after orders import failed")
 
         return OrdersImportOut(
             total_rows=len(rows), matched=counts["matched"], new=counts["new"],

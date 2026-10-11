@@ -21,6 +21,7 @@ import SectionLedger from "@/pages/SectionLedger";
 import CategorySettings from "@/pages/CategorySettings";
 import SellerFlashImport from "@/pages/SellerFlashImport";
 import AmazonOrdersImport from "@/pages/AmazonOrdersImport";
+import FbaTracking from "@/pages/FbaTracking";
 
 function App() {
   return (
@@ -33,7 +34,7 @@ function App() {
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/transactions" element={<Transactions />} />
-              <Route path="/fba" element={<SectionLedger section="fba" title="FBA Takibi" subtitle="FBA gelir ve giderleri" />} />
+              <Route path="/fba" element={<FbaTracking />} />
               <Route path="/ppc" element={<SectionLedger section="ppc" title="PPC Reklam Takibi" subtitle="Kampanya başına tıklama / gösterim / sipariş" />} />
               <Route path="/payouts" element={<Payouts />} />
               <Route path="/sellerflash" element={<SellerFlashImport />} />
