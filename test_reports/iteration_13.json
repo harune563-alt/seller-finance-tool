@@ -1,0 +1,41 @@
+{
+  "summary": "Single-scenario regression for FBA sale deletion -> FIFO reversal + lot delete guard. Created isolated TEST_FBA_DEL_<rand> store, ran 3 pytest cases, and did a login smoke-check in the browser. 2/3 backend tests PASS. Scenario 3 (partial order with a non-FBA expense sharing order_id) FAILS: deleting the final non-FBA transaction leaves the allocation active and the lot DEPLETED.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "DELETE /api/transactions/{tx_id} (and POST /api/transactions/bulk-delete)",
+        "issue": "Cleanup only fires when the deleted transaction itself has fulfillment_type=='FBA'. If the LAST remaining transaction on an order is non-FBA (e.g. a manually added expense with the same order_id as an already-deleted FBA sale), deleting it leaves the order's FIFO allocations in status='active' and the lot stuck at remaining_quantity=0 / lot_status=DEPLETED. Response: {'reversed_allocations': 0}. Lot never recovers.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_fba_delete_scenario.py",
+    "/app/test_reports/pytest/fba_delete_scenario.xml"
+  ],
+  "action_items": [
+    "In /app/backend/server.py DELETE /api/transactions/{tx_id} (~L734) and POST /api/transactions/bulk-delete (~L650), pass ALL (store_id, order_id) pairs from the deleted docs to cleanup_deleted_fba_sales — NOT only those with fulfillment_type=='FBA'. cleanup_deleted_fba_sales already short-circuits when remaining txs>0, and reverse_fba_order only acts on orders that still have active FBA allocations, so broadening the ref set is safe and fixes the partial-order case.",
+    "Alternative: also check if any allocation exists for (store_id, order_id) of the deleted doc regardless of fulfillment_type."
+  ],
+  "critical_code_review_comments": [
+    "server.py L658: refs = [(d['store_id'], d.get('order_id')) for d in docs if d.get('fulfillment_type') == 'FBA'] — the fulfillment_type filter is the root cause of the partial-order bug. The same anti-pattern repeats at L742.",
+    "fba.py reverse_fba_order: lot_status is persisted uppercase ('OPEN'/'DEPLETED'/'CLOSED') while the review-request text and some docs call them lowercase. Confirm clients/tests use uppercase consistently.",
+    "fba.py cleanup_deleted_fba_sales dedupes refs with a set, good — but silently ignores docs with no order_id."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_fba_delete_scenario.py (new)"
+  ],
+  "success_rate": {"backend": "67% (2/3)", "frontend": "login smoke only — passed"},
+  "test_credentials": "admin@amzsuite.com / admin123",
+  "seed_data_creation": "Each test case creates its own TEST_FBA_DEL_<rand> store and TEST-SKU-* lots, then deletes the store on teardown. Real 'ng' store untouched.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Reproducer: see test_03_partial_order_keeps_alloc_until_last_tx in /app/backend/tests/test_fba_delete_scenario.py. Lot/allocation status values in Mongo are UPPERCASE: 'OPEN','DEPLETED','CLOSED','active','reversed'. Rerun pytest with REACT_APP_BACKEND_URL set (frontend/.env points to the preview URL but shell doesn't inherit it; export it or use `env REACT_APP_BACKEND_URL=... pytest ...`). Pytest.ini forces xdist loadscope — pass `-o addopts=` to disable.",
+  "rca of the issue": "DELETE /api/transactions/{tx_id} and bulk-delete both build the refs list filtered by fulfillment_type=='FBA'. Manually-created expense rows added via POST /api/transactions share the FBA order_id but have no fulfillment_type set (TransactionIn has no such field; extra='ignore' strips it). So when the ONLY surviving row for an FBA order is such a non-FBA expense, deleting it never contributes a ref to cleanup_deleted_fba_sales, and the allocation never gets reversed. Fix: drop the fulfillment_type filter when building refs — cleanup_deleted_fba_sales already does the authoritative 'count any transactions remaining on this order' check and only reverses when zero remain."
+}

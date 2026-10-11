@@ -655,7 +655,7 @@ async def bulk_delete_transactions(data: BulkDeleteIn, user=Depends(get_current_
     result = await db.transactions.delete_many({"id": {"$in": ids}, "user_id": user["id"]})
     if result.deleted_count == 0:
         raise HTTPException(404, "Silinecek işlem bulunamadı")
-    refs = [(d["store_id"], d.get("order_id")) for d in docs if d.get("fulfillment_type") == "FBA"]
+    refs = [(d["store_id"], d.get("order_id")) for d in docs if d.get("order_id")]
     reversed_allocations = await cleanup_deleted_fba_sales(db, user["id"], refs, user.get("email", "")) if refs else 0
     return {"ok": True, "deleted": result.deleted_count, "reversed_allocations": reversed_allocations}
 
@@ -739,7 +739,7 @@ async def delete_transaction(tx_id: str, user=Depends(get_current_user)):
     if r.deleted_count == 0:
         raise HTTPException(404, "İşlem bulunamadı")
     reversed_allocations = 0
-    if tx and tx.get("fulfillment_type") == "FBA" and tx.get("order_id"):
+    if tx and tx.get("order_id"):
         reversed_allocations = await cleanup_deleted_fba_sales(
             db, user["id"], [(tx["store_id"], tx["order_id"])], user.get("email", ""))
     return {"ok": True, "reversed_allocations": reversed_allocations}

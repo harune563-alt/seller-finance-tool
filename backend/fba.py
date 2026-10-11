@@ -332,13 +332,14 @@ async def reverse_fba_order(db, user_id, store_id, order_id, user_email="", note
 
 
 async def cleanup_deleted_fba_sales(db, user_id, order_refs, user_email=""):
-    """After sale transactions are deleted: any order left with NO remaining financial
-    records gets its FIFO allocations reversed, so orders/stock/profit panels derive
-    from active data only. The inventory lot itself is never deleted here."""
+    """After sale transactions are deleted: any order left with NO remaining FBA
+    financial record gets its FIFO allocations reversed, so orders/stock/profit
+    panels derive from active data only. The inventory lot itself is never deleted."""
     reversed_allocations = 0
     for store_id, order_id in sorted({(s, o) for s, o in order_refs if o}):
         remaining = await db.transactions.count_documents(
-            {"user_id": user_id, "store_id": store_id, "order_id": order_id})
+            {"user_id": user_id, "store_id": store_id, "order_id": order_id,
+             "fulfillment_type": "FBA"})
         if remaining:
             continue
         reversed_allocations += await reverse_fba_order(
