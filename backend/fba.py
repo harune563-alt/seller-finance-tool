@@ -129,8 +129,10 @@ class ManualSaleIn(BaseModel):
     amount: float = Field(gt=0, le=1_000_000_000, allow_inf_nan=False)
     order_id: str = Field(default="", max_length=100)
     date: str
+    currency: str = Field(default="", max_length=3)
+    category: str = Field(default="", max_length=120)
 
-    @field_validator("sku", "asin", "product_name", "marketplace", "order_id", mode="before")
+    @field_validator("sku", "asin", "product_name", "marketplace", "order_id", "currency", "category", mode="before")
     @classmethod
     def strip(cls, v):
         return (v or "").strip() if isinstance(v, str) or v is None else v
@@ -789,13 +791,14 @@ def fba_router(db, get_current_user, marketplaces=None):
                 if existing:
                     raise HTTPException(409, "Bu Order ID ile manuel FBA satışı zaten var")
             now = now_iso()
-            currency = MARKETPLACES[data.marketplace]["currency"]
+            currency = (data.currency or MARKETPLACES[data.marketplace]["currency"]).upper()
+            category = data.category or "Order payments"
             asin = data.asin or next((l.get("asin") for l in lots if l.get("asin")), "")
             product_name = data.product_name or next((l.get("product_name") for l in lots if l.get("product_name")), "")
             tid = str(uuid.uuid4())
             doc = {
                 "id": tid, "user_id": user["id"], "store_id": data.store_id,
-                "marketplace": data.marketplace, "type": "income", "category": "Order payments",
+                "marketplace": data.marketplace, "type": "income", "category": category,
                 "amount": float(q2(data.amount)), "currency": currency, "cost_currency": "USD",
                 "date": data.date, "description": f"Manuel FBA satışı · {data.sku}",
                 "order_id": order_id, "sku": data.sku, "quantity": str(data.quantity),

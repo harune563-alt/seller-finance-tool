@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import api from "@/lib/api";
+import { useCategories } from "@/hooks/useCategories";
 import { Button } from "@/components/ui/button";
 import { TextField, FormError, apiError } from "@/components/company/Fields";
 import { SelectField } from "@/components/company/Fields";
@@ -12,6 +13,9 @@ const EMPTY = { sku: "", asin: "", product_name: "", quantity: "1", amount: "", 
 export const ManualFbaSale = ({ storeId, marketplaces, onSaved }) => {
   const [form, setForm] = useState(EMPTY);
   const [marketplace, setMarketplace] = useState(marketplaces?.[0] || "US");
+  const { byType } = useCategories(storeId);
+  const fbaCategories = byType(undefined, "fba");
+  const [category, setCategory] = useState("FBA Satış");
   const [lookup, setLookup] = useState(null);
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState("");
@@ -51,7 +55,7 @@ export const ManualFbaSale = ({ storeId, marketplaces, onSaved }) => {
       const { data } = await api.post("/fba/manual-sale", {
         store_id: storeId, marketplace, sku: form.sku.trim(), asin: form.asin.trim(),
         product_name: form.product_name.trim(), quantity: qty, amount,
-        order_id: form.order_id.trim(), date: form.date,
+        order_id: form.order_id.trim(), date: form.date, currency: "CAD", category,
       });
       toast.success(`Manuel FBA satışı kaydedildi · ${data.order_id}`);
       setForm(EMPTY); setLookup(null); setPreview(null);
@@ -80,11 +84,13 @@ export const ManualFbaSale = ({ storeId, marketplaces, onSaved }) => {
           <TextField label="ASIN" id="mfba-asin" value={form.asin} onChange={v => setForm({ ...form, asin: v })} placeholder="Otomatik dolar" />
           <SelectField label="Pazar Yeri" id="mfba-marketplace" value={marketplace} onChange={setMarketplace}
             options={(marketplaces || []).map(c => ({ value: c, label: c }))} />
+          <SelectField label="Kategori" id="mfba-category" value={category} onChange={setCategory}
+            options={(fbaCategories.length ? fbaCategories.map(c => c.name) : ["FBA Satış"]).map(n => ({ value: n, label: n }))} />
         </div>
         <TextField label="Ürün Adı" id="mfba-product" value={form.product_name} onChange={v => setForm({ ...form, product_name: v })} placeholder="Otomatik dolar" />
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <TextField label="Adet" id="mfba-quantity" type="number" min="1" value={form.quantity} onChange={v => setForm({ ...form, quantity: v })} required />
-          <TextField label="Satış Tutarı (Amazon Net)" id="mfba-amount" type="number" step="0.01" min="0.01" value={form.amount} onChange={v => setForm({ ...form, amount: v })} required />
+          <TextField label="Satış Tutarı (Amazon Net · CAD)" id="mfba-amount" type="number" step="0.01" min="0.01" value={form.amount} onChange={v => setForm({ ...form, amount: v })} placeholder="0.00 CAD" required />
           <TextField label="Order ID (opsiyonel)" id="mfba-order" value={form.order_id} onChange={v => setForm({ ...form, order_id: v })} placeholder="Boş bırak = otomatik" />
           <TextField label="Tarih" id="mfba-date" type="date" value={form.date} onChange={v => setForm({ ...form, date: v })} required />
         </div>
@@ -111,9 +117,6 @@ export const ManualFbaSale = ({ storeId, marketplaces, onSaved }) => {
                   <div><div className="text-xs text-slate-500">FIFO Inbound</div><div className="font-mono-num font-semibold" data-testid="mfba-inbound-cost">{usd(preview.inbound_cost_usd)}</div></div>
                   <div><div className="text-xs text-slate-500">Toplam FIFO Maliyeti</div><div className="font-mono-num font-semibold text-indigo-700" data-testid="mfba-total-cost">{usd(preview.total_fifo_cost_usd)}</div></div>
                 </div>
-                {form.amount && (
-                  <div className="mt-2 text-sm text-slate-600">Tahmini Net Kâr: <b className="font-mono-num" data-testid="mfba-est-profit">{usd(Number(form.amount) - preview.total_fifo_cost_usd)}</b></div>
-                )}
                 <div className="mt-3 border-t border-emerald-200 pt-2">
                   <div className="text-xs text-slate-500 mb-1">Lot dağılımı (FIFO):</div>
                   <div className="space-y-1">

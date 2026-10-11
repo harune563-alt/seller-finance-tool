@@ -69,7 +69,7 @@ export default function FbaTracking() {
         </TabsContent>
         <TabsContent value="manual" className="mt-4 space-y-4">
           <ManualFbaSale storeId={activeStoreId} marketplaces={activeStore?.marketplaces || []} onSaved={load} />
-          <SectionLedger section="fba" title="Manuel FBA Kayıtları" subtitle="FBA gelir ve giderleri (önceki kayıt ekranı)" />
+          <SectionLedger section="fba" title="Manuel FBA Kayıtları" subtitle="FBA gelir ve gider kayıtları" showForm={false} />
         </TabsContent>
       </Tabs>
     </div>

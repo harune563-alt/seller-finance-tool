@@ -43,6 +43,12 @@ Import and run existing project from GitHub (repo: harune563-alt/seller-finance-
 - Cash flow purchase/inbound records untouched; lots never auto-deleted on sale deletion
 - Tests: iteration_14 4/4 pass (main scenario, partial-order, lot guard, bulk delete)
 
+## FBA Takibi UI Düzeltmesi (2026-10-11)
+- Manuel FBA Kayıtları sekmesindeki ikinci (alt) manuel giriş formu kaldırıldı; yalnızca kayıt listesi/özet kaldı (SectionLedger'a showForm prop'u eklendi, varsayılan true)
+- Kategori alanı üstteki Manuel FBA Satışı formuna taşındı (FBA bölüm kategorileri, varsayılan "FBA Satış"); backend ManualSaleIn artık category + currency kabul ediyor
+- Satış Tutarı alanı CAD: label/placeholder CAD, payload currency="CAD"; backend attach_usd ile USD'ye çeviriyor (doğrulandı: CAD 41.00 → USD 28.81)
+- CAD tutarı USD FIFO maliyetiyle karışmasın diye formdaki "Tahmini Net Kâr" satırı kaldırıldı
+
 ## Backlog
 - P0: none — ready for next development task
 - P1/P2: per user's next feature requests

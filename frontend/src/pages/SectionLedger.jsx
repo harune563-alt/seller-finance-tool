@@ -150,7 +150,7 @@ const RowItem = ({ row, section, onDelete }) => (
   </tr>
 );
 
-export default function SectionLedger({ section, title, subtitle, embedded = false }) {
+export default function SectionLedger({ section, title, subtitle, embedded = false, showForm = true }) {
   const { activeStore, activeStoreId } = useStore();
   const [revision, setRevision] = useState(0);
   const refresh = () => setRevision((v) => v + 1);
@@ -200,7 +200,7 @@ export default function SectionLedger({ section, title, subtitle, embedded = fal
               <Metric label="Kayıt Sayısı" value={rows.length} />
             )}
           </div>
-          {section === "ppc" ? <PpcForm onSaved={refresh} /> : <GenericForm section={section} onSaved={refresh} />}
+          {showForm && (section === "ppc" ? <PpcForm onSaved={refresh} /> : <GenericForm section={section} onSaved={refresh} />)}
           <div className="border border-slate-200 rounded-xl bg-white overflow-x-auto">
             <table className="w-full text-sm" data-testid={`${section}-table`}>
               <thead className="bg-slate-50 text-xs uppercase text-slate-500">
