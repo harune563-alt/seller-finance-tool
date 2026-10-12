@@ -20,12 +20,14 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
+from pymongo.errors import DuplicateKeyError
 
 from finance import money
 from fx_service import FxError, get_rate
 
 IN, OUT = "IN", "OUT"
-AMAZON_PAYMENT = "AMAZON_PAYMENT"
+AMAZON_PAYMENT = "AMAZON_PAYMENT"  # legacy; order rows are no longer cash-in
+AMAZON_DISBURSEMENT = "AMAZON_DISBURSEMENT"
 FBA_INVENTORY_PURCHASE = "FBA_INVENTORY_PURCHASE"
 FBA_INBOUND_SHIPPING = "FBA_INBOUND_SHIPPING"
 FBM_PRODUCT_COST = "FBM_PRODUCT_COST"
@@ -35,6 +37,7 @@ MANUAL = "MANUAL"
 
 SOURCE_LABELS = {
     AMAZON_PAYMENT: "Amazon Tahsilatı",
+    AMAZON_DISBURSEMENT: "Amazon Ödemesi (Bankada)",
     FBA_INVENTORY_PURCHASE: "FBA Envanter Alımı",
     FBA_INBOUND_SHIPPING: "FBA Inbound Nakliye",
     FBM_PRODUCT_COST: "FBM Ürün Maliyeti",
@@ -97,7 +100,7 @@ async def sync_cash_flow(db, user_id):
     desired = {}
 
     def put(source_type, source_id, *, store_id, marketplace, date, direction,
-            amount, order_id="", lot_id="", description="", category=None):
+            amount, order_id="", lot_id="", description="", category=None, **extra):
         amount = q2(amount)
         key = f"{source_type}:{source_id}"
         if amount <= 0:
@@ -108,7 +111,7 @@ async def sync_cash_flow(db, user_id):
             "category": category or SOURCE_LABELS[source_type],
             "amount_usd": float(amount), "source_type": source_type,
             "source_id": source_id, "order_id": order_id or "", "lot_id": lot_id or "",
-            "description": description or "", "is_manual": False,
+            "description": description or "", "is_manual": False, **extra,
         }
 
     # 1) FBA lots -> inventory purchase + inbound shipping cash out on purchase date.
@@ -141,17 +144,24 @@ async def sync_cash_flow(db, user_id):
             date=date, direction=OUT, amount=D(rec.get("shipping_cost_usd") or rec.get("initial_shipment_cost") or 0),
             order_id=oid, description=f"SellerFlash kargo maliyeti · {oid}")
 
-    # 3) Amazon canonical income -> cash in.
+    # 3) Amazon disbursement (payout) that reached the bank -> cash in.
+    #    Amazon order/payment rows are operational activity only (P&L / Amazon
+    #    balance); counting them here too would double count the same money.
     async for tx in db.transactions.find(
-            {"user_id": user_id, "type": "income", "source": "amazon_payments_csv"}, {"_id": 0}):
+            {"user_id": user_id, "type": "payout", "category": "Bankada"}, {"_id": 0}):
         try:
             amount = await _usd_amount(db, tx, "amount")
         except FxError:
             continue  # FX not available yet; entry appears on a later sync.
-        put(AMAZON_PAYMENT, tx["id"], store_id=tx["store_id"], marketplace=tx.get("marketplace", ""),
-            date=tx["date"], direction=IN, amount=amount, order_id=tx.get("order_id") or "",
-            description=tx.get("description") or f"Amazon tahsilatı · {tx.get('order_id') or tx['id'][:8]}",
-            category=tx.get("category") or SOURCE_LABELS[AMAZON_PAYMENT])
+        original = money(tx["amount"])
+        reference = (tx.get("payment_reference") or "").strip()
+        desc = f"Amazon ödemesi · {original} {tx.get('currency', '')}"
+        if reference:
+            desc += f" · Ref {reference}"
+        put(AMAZON_DISBURSEMENT, tx["id"], store_id=tx["store_id"], marketplace=tx.get("marketplace", ""),
+            date=tx["date"], direction=IN, amount=amount, description=desc,
+            original_amount=float(original), original_currency=tx.get("currency", ""),
+            payment_reference=reference)
 
     # 4) Existing extra costs -> cash out.
     async for tx in db.transactions.find(
@@ -168,13 +178,19 @@ async def sync_cash_flow(db, user_id):
         {"user_id": user_id}, {"_id": 0}).to_list(None)}
 
     comparable = ("store_id", "marketplace", "date", "direction", "category",
-                  "amount_usd", "order_id", "lot_id", "description")
+                  "amount_usd", "order_id", "lot_id", "description",
+                  "original_amount", "original_currency", "payment_reference")
     for key, doc in desired.items():
         cur = existing.get(key)
         if cur is None:
-            await db.cash_flow_entries.insert_one({
-                "id": str(uuid.uuid4()), **doc, "created_at": now, "updated_at": now})
-        elif any(cur.get(field) != doc[field] for field in comparable):
+            try:
+                await db.cash_flow_entries.update_one(
+                    {"user_id": user_id, "idem_key": key},
+                    {"$setOnInsert": {"id": str(uuid.uuid4()), **doc, "created_at": now, "updated_at": now}},
+                    upsert=True)
+            except DuplicateKeyError:
+                pass  # a concurrent sync already inserted this exact source entry
+        elif any(cur.get(field) != doc.get(field) for field in comparable):
             await db.cash_flow_entries.update_one(
                 {"user_id": user_id, "idem_key": key},
                 {"$set": {**doc, "updated_at": now}})
@@ -381,6 +397,10 @@ def cashflow_router(db, get_current_user, marketplaces):
                 "cash_in": float(q2(e["amount_usd"])) if e["direction"] == IN else None,
                 "cash_out": float(q2(e["amount_usd"])) if e["direction"] == OUT else None,
                 "running_balance": float(q2(balance)), "is_manual": bool(e.get("is_manual")),
+                "source_id": e.get("source_id", ""),
+                "original_amount": e.get("original_amount"),
+                "original_currency": e.get("original_currency", ""),
+                "payment_reference": e.get("payment_reference", ""),
             })
         return {"currency": "USD", "opening_cash": float(q2(opening)),
                 "closing_cash": float(q2(balance)), "rows": rows}
@@ -400,7 +420,7 @@ def cashflow_router(db, get_current_user, marketplaces):
                 return sum(D(e["amount_usd"]) for e in bucket
                            if e["direction"] == direction and e["source_type"] in sources)
 
-            amazon_in = total(IN, AMAZON_PAYMENT)
+            amazon_in = total(IN, AMAZON_PAYMENT, AMAZON_DISBURSEMENT)
             other_in = total(IN, MANUAL)
             purchases = total(OUT, FBA_INVENTORY_PURCHASE)
             inbound = total(OUT, FBA_INBOUND_SHIPPING)
