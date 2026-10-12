@@ -34,6 +34,14 @@ FBM_PRODUCT_COST = "FBM_PRODUCT_COST"
 FBM_SHIPPING_COST = "FBM_SHIPPING_COST"
 EXTRA_COST = "EXTRA_COST"
 MANUAL = "MANUAL"
+# Sermaye & Kasa (financing/equity) — cash flow only, never P&L.
+CAPITAL_INJECTION = "CAPITAL_INJECTION"
+OWNER_WITHDRAWAL = "OWNER_WITHDRAWAL"
+CASH_DEPOSIT = "CASH_DEPOSIT"
+CASH_WITHDRAWAL = "CASH_WITHDRAWAL"
+FINANCING_IN = (CAPITAL_INJECTION, CASH_DEPOSIT)
+FINANCING_OUT = (OWNER_WITHDRAWAL, CASH_WITHDRAWAL)
+COMPANY_SCOPE = ""  # store_id of company-level (storeless) Kasa movements
 
 SOURCE_LABELS = {
     AMAZON_PAYMENT: "Amazon Tahsilatı",
@@ -44,7 +52,19 @@ SOURCE_LABELS = {
     FBM_SHIPPING_COST: "FBM Kargo Maliyeti",
     EXTRA_COST: "Ekstra Maliyet",
     MANUAL: "Manuel",
+    CAPITAL_INJECTION: "Sermaye Ekleme",
+    OWNER_WITHDRAWAL: "Sermaye Çekme",
+    CASH_DEPOSIT: "Kasa Girişi",
+    CASH_WITHDRAWAL: "Kasa Çıkışı",
 }
+SOURCE_MODULES = {key: "Sermaye & Kasa" for key in (*FINANCING_IN, *FINANCING_OUT)}
+
+
+async def _native_to_usd(db, amount, currency, date, quote=None):
+    if (currency or "USD") == "USD":
+        return money(amount)
+    rate = (quote or {}).get("rate") or (await get_rate(db, currency, date))["rate"]
+    return money(D(amount) * D(rate))
 
 
 def D(value):
@@ -177,6 +197,48 @@ async def sync_cash_flow(db, user_id):
             date=tx["date"], direction=OUT, amount=amount, order_id=tx.get("order_id") or "",
             description=tx.get("description") or "Ekstra maliyet")
 
+    # 5) Sermaye & Kasa -> financing cash movements (read-only; never touches P&L).
+    #    Stable source id = the capital entry id / cash movement id.
+    people = {p["id"]: p.get("name", "") for p in await db.company_people.find(
+        {"user_id": user_id}, {"_id": 0, "id": 1, "name": 1}).to_list(None)}
+    async for account in db.company_capital.find({"user_id": user_id}, {"_id": 0}):
+        currency = account.get("currency") or "USD"
+        for entry in account.get("entries", []):
+            contribution = entry["direction"] == "contribution"
+            original = D(entry["amount_cents"]) / 100
+            try:
+                amount = await _native_to_usd(db, original, currency, entry["date"],
+                                              entry.get("fx") if contribution else None)
+            except FxError:
+                continue
+            source_type = CAPITAL_INJECTION if contribution else OWNER_WITHDRAWAL
+            person = people.get(account.get("person_id"), "")
+            desc = f"{SOURCE_LABELS[source_type]} · {q2(original)} {currency}"
+            if person:
+                desc += f" · {person}"
+            if entry.get("note"):
+                desc += f" · {entry['note']}"
+            put(source_type, entry["id"], store_id=account["store_id"], marketplace="",
+                date=entry["date"], direction=IN if contribution else OUT, amount=amount,
+                description=desc, original_amount=float(q2(original)), original_currency=currency,
+                payment_reference="")
+    async for movement in db.company_cash.find({"user_id": user_id}, {"_id": 0}):
+        currency = movement.get("currency") or "USD"
+        original = D(movement["amount_cents"]) / 100
+        try:
+            amount = await _native_to_usd(db, original, currency, movement["date"])
+        except FxError:
+            continue
+        deposit = movement["direction"] == "in"
+        source_type = CASH_DEPOSIT if deposit else CASH_WITHDRAWAL
+        desc = f"{SOURCE_LABELS[source_type]} · {q2(original)} {currency}"
+        if movement.get("note"):
+            desc += f" · {movement['note']}"
+        put(source_type, movement["id"], store_id=COMPANY_SCOPE, marketplace="",
+            date=movement["date"], direction=IN if deposit else OUT, amount=amount,
+            description=desc, original_amount=float(q2(original)), original_currency=currency,
+            payment_reference="")
+
     existing = {e["idem_key"]: e for e in await db.cash_flow_entries.find(
         {"user_id": user_id}, {"_id": 0}).to_list(None)}
 
@@ -302,16 +364,25 @@ def cashflow_router(db, get_current_user, marketplaces):
             "store_id": store_id, "entry_id": entry_id, "action": action,
             "previous_value": previous, "new_value": new, "note": note, "timestamp": now_iso()})
 
-    def entry_query(user, store_ids, marketplace):
-        q = {"user_id": user["id"], "store_id": {"$in": store_ids}}
+    def entry_query(user, store_ids, marketplace, include_company=False):
+        scope = list(store_ids) + ([COMPANY_SCOPE] if include_company else [])
+        q = {"user_id": user["id"], "store_id": {"$in": scope}}
         if marketplace and marketplace != "ALL":
             q["marketplace"] = marketplace
         return q
 
+    async def capital_store_ids(user):
+        """Stores whose starting cash is already represented by dated Sermaye & Kasa capital."""
+        return set(await db.company_capital.distinct(
+            "store_id", {"user_id": user["id"], "entries.0": {"$exists": True}}))
+
     async def opening_total(user, store_ids):
+        superseded = await capital_store_ids(user)
         docs = await db.cash_flow_opening_balances.find(
             {"user_id": user["id"], "store_id": {"$in": store_ids}}, {"_id": 0}).to_list(None)
-        return sum(D(d.get("amount_usd", 0)) for d in docs)
+        # A manual opening balance is NOT applied for a store that has Sermaye & Kasa capital:
+        # the dated capital injection already carries that starting cash (no double counting).
+        return sum(D(d.get("amount_usd", 0)) for d in docs if d["store_id"] not in superseded)
 
     async def inventory_metrics(user, store_ids, marketplace, start, end):
         lot_q = {"user_id": user["id"], "store_id": {"$in": store_ids}}
@@ -339,8 +410,11 @@ def cashflow_router(db, get_current_user, marketplaces):
             raise HTTPException(400, "Başlangıç tarihi bitişten sonra olamaz")
         await sync_cash_flow(db, user["id"])
         store_ids, names = await scope_stores(user, store_id)
+        company_wide = not store_id or store_id == "ALL"
+        if company_wide:
+            names = {**names, COMPANY_SCOPE: "Şirket (Genel)"}
         entries = await db.cash_flow_entries.find(
-            entry_query(user, store_ids, marketplace), {"_id": 0}).to_list(None)
+            entry_query(user, store_ids, marketplace, include_company=company_wide), {"_id": 0}).to_list(None)
         entries.sort(key=lambda e: (e["date"], e.get("created_at", ""), e["id"]))
         opening = await opening_total(user, store_ids)
         if start_date:
@@ -362,9 +436,12 @@ def cashflow_router(db, get_current_user, marketplaces):
         closing = q2(opening + net)
         purchases, current_value, realized = await inventory_metrics(
             user, store_ids, marketplace, start_date, end_date)
+        superseded = sorted(set(store_ids) & await capital_store_ids(user))
         return {
             "currency": "USD",
             "opening_cash": float(q2(opening)),
+            "opening_source": "sermaye_kasa" if superseded else "manual",
+            "manual_opening_superseded_store_ids": superseded,
             "cash_in": float(q2(cash_in)),
             "cash_out": float(q2(cash_out)),
             "net_cash_flow": float(net),
@@ -396,6 +473,7 @@ def cashflow_router(db, get_current_user, marketplaces):
                 "direction": e["direction"], "category": e["category"],
                 "description": e.get("description", ""), "source_type": e["source_type"],
                 "source_label": SOURCE_LABELS.get(e["source_type"], e["source_type"]),
+                "source_module": SOURCE_MODULES.get(e["source_type"], ""),
                 "order_id": e.get("order_id", ""), "lot_id": e.get("lot_id", ""),
                 "cash_in": float(q2(e["amount_usd"])) if e["direction"] == IN else None,
                 "cash_out": float(q2(e["amount_usd"])) if e["direction"] == OUT else None,
@@ -424,19 +502,22 @@ def cashflow_router(db, get_current_user, marketplaces):
                            if e["direction"] == direction and e["source_type"] in sources)
 
             amazon_in = total(IN, AMAZON_PAYMENT, AMAZON_DISBURSEMENT)
-            other_in = total(IN, MANUAL)
+            financing_in = total(IN, *FINANCING_IN)
+            financing_out = total(OUT, *FINANCING_OUT)
+            other_in = total(IN, MANUAL) + financing_in
             purchases = total(OUT, FBA_INVENTORY_PURCHASE)
             inbound = total(OUT, FBA_INBOUND_SHIPPING)
             fbm_product = total(OUT, FBM_PRODUCT_COST)
             fbm_shipping = total(OUT, FBM_SHIPPING_COST)
             extra = total(OUT, EXTRA_COST)
-            other_out = total(OUT, MANUAL)
+            other_out = total(OUT, MANUAL) + financing_out
             beginning = q2(balance)
             net = q2(amazon_in + other_in - purchases - inbound - fbm_product - fbm_shipping - extra - other_out)
             balance = D(beginning) + net
             out.append({
                 "month": month, "beginning_cash": float(beginning),
                 "amazon_cash_in": float(q2(amazon_in)), "other_cash_in": float(q2(other_in)),
+                "capital_cash_in": float(q2(financing_in)), "capital_cash_out": float(q2(financing_out)),
                 "inventory_purchases": float(q2(purchases)), "fba_inbound_shipping": float(q2(inbound)),
                 "fbm_product_costs": float(q2(fbm_product)), "fbm_shipping_costs": float(q2(fbm_shipping)),
                 "extra_costs": float(q2(extra)), "other_cash_out": float(q2(other_out)),
@@ -505,11 +586,13 @@ def cashflow_router(db, get_current_user, marketplaces):
         stores = await db.stores.find({"user_id": user["id"]}, {"_id": 0}).to_list(None)
         docs = {d["store_id"]: d for d in await db.cash_flow_opening_balances.find(
             {"user_id": user["id"]}, {"_id": 0}).to_list(None)}
+        superseded = await capital_store_ids(user)
         return {"currency": "USD", "balances": [{
             "store_id": s["id"], "store_name": s["name"],
             "amount_usd": float(q2((docs.get(s["id"]) or {}).get("amount_usd", 0))),
             "updated_at": (docs.get(s["id"]) or {}).get("updated_at"),
             "history": (docs.get(s["id"]) or {}).get("history", []),
+            "superseded_by_capital": s["id"] in superseded,
         } for s in stores]}
 
     @router.put("/opening-balance")

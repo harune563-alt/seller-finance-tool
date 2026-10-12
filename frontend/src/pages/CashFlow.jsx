@@ -172,8 +172,8 @@ export default function CashFlow() {
       {error && <p role="alert" data-testid="cashflow-error" className="text-sm text-rose-600">{error}</p>}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" data-testid="cashflow-summary-cards">
-        <KpiCard testId="cf-opening" label="Açılış Nakit" accent="slate" icon={Landmark} value={formatUsd(s.opening_cash)} hint="Dönem başı bakiye" />
-        <KpiCard testId="cf-in" label="Toplam Nakit Girişi" accent="emerald" icon={TrendingUp} value={formatUsd(s.cash_in)} hint="Amazon + manuel girişler" />
+        <KpiCard testId="cf-opening" label="Açılış Nakit" accent="slate" icon={Landmark} value={formatUsd(s.opening_cash)} hint={s.opening_source === "sermaye_kasa" ? "Sermaye & Kasa kayıtlarından" : "Dönem başı bakiye"} />
+        <KpiCard testId="cf-in" label="Toplam Nakit Girişi" accent="emerald" icon={TrendingUp} value={formatUsd(s.cash_in)} hint="Amazon, Sermaye & Kasa ve manuel girişler" />
         <KpiCard testId="cf-out" label="Toplam Nakit Çıkışı" accent="rose" icon={TrendingDown} value={formatUsd(s.cash_out)} hint="Envanter, FBM maliyetleri, ekstra, manuel" />
         <KpiCard testId="cf-net" label="Net Nakit Akışı" accent="indigo" icon={DollarSign} value={formatUsd(s.net_cash_flow)} hint="Giriş − Çıkış" />
         <KpiCard testId="cf-closing" label="Kapanış Nakit" accent="amber" icon={Wallet} value={formatUsd(s.closing_cash)} hint="Açılış + Net Akış" />
@@ -213,7 +213,7 @@ export default function CashFlow() {
                   </td>
                   <td className="px-3 py-2.5 text-slate-700">{r.category}</td>
                   <td className="px-3 py-2.5 text-slate-500 max-w-[220px] truncate" title={r.description}>{r.description || "—"}</td>
-                  <td className="px-3 py-2.5 text-slate-500 text-xs">{r.source_label}</td>
+                  <td className="px-3 py-2.5 text-slate-500 text-xs" data-testid={`cf-source-${r.id}`}>{r.source_module ? `${r.source_module} · ${r.source_label}` : r.source_label}</td>
                   <td className="px-3 py-2.5 font-mono-num text-xs text-slate-500">{r.order_id || (r.lot_id ? `Lot ${r.lot_id.slice(0, 8)}` : "—")}</td>
                   <td className="px-3 py-2.5 text-right font-mono-num text-emerald-700">{r.cash_in != null ? formatUsd(r.cash_in) : ""}</td>
                   <td className="px-3 py-2.5 text-right font-mono-num text-rose-700">{r.cash_out != null ? formatUsd(r.cash_out) : ""}</td>
@@ -319,6 +319,11 @@ export default function CashFlow() {
               <p className="text-xs text-slate-500" data-testid="cf-ob-current">
                 Mevcut: <span className="font-mono-num font-semibold">{formatUsd(obCurrent.amount_usd)}</span>
                 {obCurrent.history?.length > 0 && ` · ${obCurrent.history.length} değişiklik kaydı`}
+              </p>
+            )}
+            {obCurrent?.superseded_by_capital && (
+              <p className="text-xs rounded-lg bg-amber-50 text-amber-800 px-3 py-2" data-testid="cf-ob-superseded">
+                {"Bu mağazanın başlangıç nakdi Sermaye & Kasa'daki tarihli sermaye kayıtlarından gelir. Çift sayımı önlemek için buradaki manuel açılış bakiyesi hesaplamaya dahil edilmez."}
               </p>
             )}
             <TextField label="Yeni Açılış Bakiyesi (USD)" id="cf-ob-amount" type="number" step="0.01" min="0" value={obForm.amount_usd} onChange={v => setObForm({ ...obForm, amount_usd: v })} required />
