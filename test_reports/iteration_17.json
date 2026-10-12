@@ -1,0 +1,25 @@
+{
+  "summary": "Verified Sermaye & Kasa -> Nakit Akışı integration (iteration 17). Backend pytest 5/5 PASS at /app/backend/tests/test_capital_cash_cashflow.py. UI check on /cashflow PASS: capital contribution ($5000, 2026-10-01) shows as 'Sermaye Ekleme' row with source 'Sermaye & Kasa · Sermaye Ekleme' and $5,000 cash-in; withdrawal ($500, 2026-10-05) shows as 'Sermaye Çekme' with $500 cash-out; Toplam Nakit Girişi=$5,000, Toplam Nakit Çıkışı=$500, Net=$4,500, Kapanış=$4,500, Açılış=$0.00 ('Sermaye & Kasa kayıtlarından'). Opening-balance dialog shows amber data-testid='cf-ob-superseded' note. Reload keeps exactly 2 rows (idempotent). Edit injection to $6000 propagates; delete withdrawal removes it. Company /cash deposit visible only in ALL scope under 'Şirket (Genel)', hidden in per-store scope. P/L endpoints (/portfolio/summary, /dashboard/summary) unchanged (0 revenue/expenses/net_profit) and no /transactions rows created. Opening-balance manual $5000 superseded (opening_source='sermaye_kasa', superseded_by_capital=true). Idempotency verified at API: 3x serial GET + 5x concurrent GET + re-POST same request_id all return exactly one entry per source. All test data cleaned up.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_capital_cash_cashflow.py",
+    "/app/test_reports/pytest/iter17_capital.xml",
+    "/app/test_reports/iter17_cashflow_ui.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sync_cash_flow section 5 (Sermaye & Kasa) uses stable source_id=entry.id -> upserts via idem_key guarantee single row per record; verified under concurrent GETs and re-POST idempotency.",
+    "capital_store_ids() correctly supersedes manual opening balance: /cashflow/summary returns opening_cash=0 + opening_source='sermaye_kasa', /cashflow/opening-balances returns superseded_by_capital=true per store.",
+    "Company-wide /company/cash movements correctly use COMPANY_SCOPE as store_id and are included in entry_query only when store_id=ALL (include_company=True) — hidden under per-store scope as expected.",
+    "P/L is unaffected: no rows written to /api/transactions; /portfolio/summary and /dashboard/summary report zero after capital movements."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100%"},
+  "test_credentials": "admin@amzsuite.com / admin123",
+  "seed_data_creation": "Each run creates TEST_CAP_* store (US/USD) and TEST_UI_P/TEST_P_* person. Backend test adds $5000 contribution + $500 withdrawal + company cash $200 + manual opening $5000. UI test same minus company cash. All cleaned up at teardown (DELETE capital entries, cash movement, reset opening to 0, DELETE person & store).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login endpoint returns token under 'token' key (NOT 'access_token'). Capital endpoints: POST /api/company/capital with {request_id, amount(str), date<=today, note, person_id, store_id, currency, direction}; PUT /api/company/capital/{entry_id} with same shape minus request_id; DELETE /api/company/capital/{entry_id}. Cash endpoints: POST/PUT/DELETE /api/company/cash (no store scope — always Şirket Genel). UI route /cashflow uses data-testid='cashflow-store-filter' (Radix Select) with options 'cashflow-store-filter-option-<store_id>'. Opening-balance dialog's amber note uses data-testid='cf-ob-superseded'. Row test-ids: cf-row-<entry_id>. KPI test-ids: cf-opening, cf-in, cf-out, cf-net, cf-closing. System date is Oct 12 2026 so capital dates must be <= 2026-10-12.",
+  "rca of the issue": "N/A — feature works end-to-end as designed."
+}
