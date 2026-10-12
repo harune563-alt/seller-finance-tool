@@ -57,7 +57,13 @@ SOURCE_LABELS = {
     CASH_DEPOSIT: "Kasa Girişi",
     CASH_WITHDRAWAL: "Kasa Çıkışı",
 }
-SOURCE_MODULES = {key: "Sermaye & Kasa" for key in (*FINANCING_IN, *FINANCING_OUT)}
+SOURCE_MODULES = {
+    **{key: "Sermaye & Kasa" for key in (*FINANCING_IN, *FINANCING_OUT)},
+    AMAZON_DISBURSEMENT: "Amazon Ödemeleri & Bakiye",
+    FBA_INVENTORY_PURCHASE: "FBA Envanter", FBA_INBOUND_SHIPPING: "FBA Envanter",
+    FBM_PRODUCT_COST: "SellerFlash", FBM_SHIPPING_COST: "SellerFlash",
+    EXTRA_COST: "Ekstra Maliyetler", MANUAL: "Nakit Akışı",
+}
 
 
 async def _native_to_usd(db, amount, currency, date, quote=None):
@@ -125,6 +131,10 @@ async def sync_cash_flow(db, user_id):
         key = f"{source_type}:{source_id}"
         if amount <= 0:
             return
+        # Sources stored natively in USD (FBA lots, SellerFlash, extra costs, manual) report USD as original.
+        extra.setdefault("original_amount", float(amount))
+        extra.setdefault("original_currency", "USD")
+        extra.setdefault("payment_reference", "")
         desired[key] = {
             "user_id": user_id, "idem_key": key, "store_id": store_id,
             "marketplace": marketplace or "", "date": date, "direction": direction,
@@ -238,6 +248,44 @@ async def sync_cash_flow(db, user_id):
             date=movement["date"], direction=IN if deposit else OUT, amount=amount,
             description=desc, original_amount=float(q2(original)), original_currency=currency,
             payment_reference="")
+
+    # 6) Other Kasa-affecting Sermaye & Kasa records, mirroring the Kasa ledger rules
+    #    (company/treasury.py): completed current-account movements with a cash effect,
+    #    cash-effect debt principals, and debt repayments/collections.
+    async def kasa_move(record_id, *, deposit, cents_amount, currency, date, store_id, person_id, label, note):
+        currency = currency or "USD"
+        original = D(cents_amount) / 100
+        try:
+            amount = await _native_to_usd(db, original, currency, date)
+        except FxError:
+            return
+        source_type = CASH_DEPOSIT if deposit else CASH_WITHDRAWAL
+        desc = f"{label} · {q2(original)} {currency}"
+        if people.get(person_id):
+            desc += f" · {people[person_id]}"
+        if note:
+            desc += f" · {note}"
+        put(source_type, record_id, store_id=store_id or COMPANY_SCOPE, marketplace="", date=date,
+            direction=IN if deposit else OUT, amount=amount, description=desc,
+            category=f"{SOURCE_LABELS[source_type]} · {label}",
+            original_amount=float(q2(original)), original_currency=currency, payment_reference="")
+
+    async for entry in db.company_current_entries.find(
+            {"user_id": user_id, "cash_status": "completed", "cash_effect": {"$in": ["in", "out"]}}, {"_id": 0}):
+        deposit = entry["cash_effect"] == "in"
+        await kasa_move(entry["id"], deposit=deposit, cents_amount=entry["amount_cents"],
+                        currency=entry.get("currency"), date=entry["date"], store_id=entry.get("store_id"),
+                        person_id=entry.get("person_id"), label="Cari · " + ("Kasaya giriş" if deposit else "Kasadan çıkış"),
+                        note=entry.get("note"))
+    async for debt in db.company_debts.find({"user_id": user_id}, {"_id": 0}):
+        payable = debt["direction"] == "payable"  # borrowed money: principal in, repayments out
+        common = dict(currency=debt.get("currency"), store_id=debt.get("store_id"), person_id=debt.get("person_id"))
+        if debt.get("cash_effect"):
+            await kasa_move(debt["id"], deposit=payable, cents_amount=debt["principal_cents"], date=debt["date"],
+                            label="Borç alındı" if payable else "Borç verildi", note=debt.get("note"), **common)
+        for payment in debt.get("payments", []):
+            await kasa_move(payment["id"], deposit=not payable, cents_amount=payment["amount_cents"], date=payment["date"],
+                            label="Borç ödemesi" if payable else "Alacak tahsilatı", note=payment.get("note"), **common)
 
     existing = {e["idem_key"]: e for e in await db.cash_flow_entries.find(
         {"user_id": user_id}, {"_id": 0}).to_list(None)}
