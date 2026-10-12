@@ -38,6 +38,7 @@ from company.routes import company_router
 from company.common import initialize_indexes as initialize_company_indexes
 from categories import category_router, initialize_category_indexes, resolve_category, ensure_seeded, DEFAULT_CATEGORIES
 from reporting import report_router
+from transaction_report import transaction_report_router
 from sellerflash_routes import (
     sellerflash_router, initialize_sellerflash_indexes, backfill_amazon_orders,
 )
@@ -1036,6 +1037,7 @@ async def amazon_date_change_history(
 api.include_router(company_router(db, get_current_user))
 api.include_router(category_router(db, get_current_user))
 api.include_router(report_router(db, get_current_user))
+api.include_router(transaction_report_router(db, get_current_user))
 api.include_router(sellerflash_router(db, get_current_user, MARKETPLACES))
 api.include_router(amazon_orders_router(db, get_current_user))
 api.include_router(fba_stock_router(db, get_current_user))

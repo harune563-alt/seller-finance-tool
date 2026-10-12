@@ -10,6 +10,7 @@ import { MissingFxAlert, formatUsd } from "@/components/FxStatus";
 import { SelectField, FormError } from "@/components/company/Fields";
 import { DateRange, datePreset } from "@/components/reports/DateRange";
 import { DetailedOrders } from "@/components/reports/DetailedOrders";
+import { DetailedTransactions } from "@/components/reports/DetailedTransactions";
 import { MarketplaceReport } from "@/components/reports/MarketplaceReport";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -45,11 +46,11 @@ export default function Report() {
     <FinanceCurrency summary={data} value={currency} onChange={setCurrency} prefix="report" /><FormError error={invalid ? "Geçerli tarih aralığı seçin." : report.error || downloadError} id="report-error" /><MissingFxAlert summary={data} prefix="report" />
     <FinanceSummary summary={data} prefix="report" loading={report.loading} />
     <div className="text-xs text-slate-500 flex flex-wrap justify-between gap-2" data-testid="report-scope"><span>Rapor ve sipariş özetleri seçili tarih aralığındaki hareketleri içerir.</span><span>{data?.order_count ?? "—"} sipariş/kayıt · {data?.transaction_count ?? "—"} hareket</span></div>
-    <Tabs defaultValue="summary"><TabsList data-testid="report-tabs"><TabsTrigger value="summary" data-testid="report-summary-tab">Özet</TabsTrigger><TabsTrigger value="orders" data-testid="report-orders-tab">Sipariş Ayrıntıları</TabsTrigger></TabsList>
+    <Tabs defaultValue="summary"><TabsList className="max-w-full overflow-x-auto justify-start" data-testid="report-tabs"><TabsTrigger value="summary" data-testid="report-summary-tab">Özet</TabsTrigger><TabsTrigger value="orders" data-testid="report-orders-tab">Sipariş Ayrıntıları</TabsTrigger><TabsTrigger value="transactions" data-testid="report-transactions-tab">Detaylı Hareket Raporu</TabsTrigger></TabsList>
       <TabsContent value="summary" className="space-y-7 pt-4"><section><h2 className="font-display text-lg font-bold mb-4">Mağaza Karşılaştırması · USD</h2><div className="space-y-3">{data?.by_store.map(s => <div key={s.store_id} className="grid grid-cols-2 lg:grid-cols-5 gap-4 border-b border-slate-200 py-4" data-testid={`report-store-row-${s.store_id}`}><strong className="text-sm break-words col-span-2 lg:col-span-1">{s.store_name}</strong>{[["Gelir", s.revenue], ["Gider", s.expenses], ["Net Kâr/Zarar", s.net_profit]].map(([label, value], i) => <div key={label}><p className="text-xs text-slate-500">{label}</p><strong className={`text-sm font-mono-num break-all ${i === 2 ? value < 0 ? "text-rose-700" : "text-emerald-700" : ""}`} data-testid={`report-store-${s.store_id}-${i}`}>{formatUsd(value)}</strong></div>)}<div><p className="text-xs text-slate-500">Marj</p><strong className="text-sm">{s.revenue > 0 && s.margin != null ? `${s.margin.toFixed(2)}%` : "—"}</strong></div></div>)}</div></section>
         <MarketplaceReport data={data} />
         <section><h2 className="font-display text-lg font-bold mb-4">Giderler ve Geri Kazanımlar</h2><div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">{data?.by_category.map((c, i) => <div key={c.category} className="flex flex-wrap justify-between gap-2 border-b border-slate-200 pb-3 text-sm" data-testid={`report-category-${i}`}><span>{c.category}</span><strong className={c.amount < 0 ? "text-emerald-700" : "text-rose-600"}>{formatUsd(c.amount)}</strong></div>)}</div></section>
-      </TabsContent><TabsContent value="orders" className="pt-4"><DetailedOrders query={query} /></TabsContent>
+      </TabsContent><TabsContent value="orders" className="pt-4"><DetailedOrders query={query} /></TabsContent><TabsContent value="transactions" className="pt-4"><DetailedTransactions baseQuery={query} /></TabsContent>
     </Tabs>
   </div>;
 }
