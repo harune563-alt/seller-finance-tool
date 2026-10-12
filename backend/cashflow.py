@@ -157,22 +157,59 @@ async def sync_cash_flow(db, user_id):
             amount=D(lot.get("inbound_shipping_total_usd", 0)),
             lot_id=lot["id"], description=f"Inbound nakliye · {label}")
 
-    # 2) SellerFlash costs -> FBM product/shipping cash out (never for FBA orders;
+    # 2) FBM product/shipping cost -> cash out (never for FBA orders;
     #    FBA inventory cash already left at lot purchase; FIFO COGS is P&L only).
+    #    Primary source: the order's ledger costs (SellerFlash applies its USD costs
+    #    onto the matched income transaction — same values P&L uses). Raw SellerFlash
+    #    records only fill a component the ledger does not carry (e.g. unmatched orders).
+    #    Each component is independent and keyed by order id (or transaction id).
     fba_order_ids = {oid for oid in await db.transactions.distinct(
         "order_id", {"user_id": user_id, "fulfillment_type": "FBA"}) if oid}
+    fbm = {}
+
+    def fbm_slot(key, store_id, marketplace, date, order_id):
+        return fbm.setdefault(key, {"store_id": store_id, "marketplace": marketplace or "", "date": date,
+                                    "order_id": order_id, "ledger": {}, "sf": {}})
+
     sf_records = await db.sellerflash_costs.find({"user_id": user_id}, {"_id": 0}).to_list(None)
     for rec in sf_records:
         oid = rec.get("seller_order_id") or ""
         if not oid or oid in fba_order_ids:
             continue
         date = rec.get("order_date") or (rec.get("first_imported_at") or rec.get("last_seen_at") or now)[:10]
-        put(FBM_PRODUCT_COST, oid, store_id=rec["store_id"], marketplace=rec.get("marketplace", ""),
-            date=date, direction=OUT, amount=D(rec.get("product_cost_usd") or rec.get("product_cost") or 0),
-            order_id=oid, description=f"SellerFlash ürün maliyeti · {oid}")
-        put(FBM_SHIPPING_COST, oid, store_id=rec["store_id"], marketplace=rec.get("marketplace", ""),
-            date=date, direction=OUT, amount=D(rec.get("shipping_cost_usd") or rec.get("initial_shipment_cost") or 0),
-            order_id=oid, description=f"SellerFlash kargo maliyeti · {oid}")
+        slot = fbm_slot(oid, rec["store_id"], rec.get("marketplace", ""), date, oid)
+        for comp, fields in (("product", ("product_cost_usd", "product_cost")),
+                             ("shipping", ("shipping_cost_usd", "initial_shipment_cost"))):
+            value = next((rec[f] for f in fields if rec.get(f) is not None), None)
+            if value is not None:  # blank = no information; stored values are already USD
+                slot["sf"][comp] = D(value)
+    async for tx in db.transactions.find({
+            "user_id": user_id, "type": "income", "fulfillment_type": {"$ne": "FBA"},
+            "$or": [{"product_cost": {"$gt": 0}}, {"shipping_cost": {"$gt": 0}}]}, {"_id": 0}):
+        oid = tx.get("order_id") or ""
+        if oid and oid in fba_order_ids:
+            continue
+        slot = fbm_slot(oid or tx["id"], tx["store_id"], tx.get("marketplace", ""), tx["date"], oid)
+        slot["store_id"], slot["marketplace"], slot["date"] = tx["store_id"], tx.get("marketplace", "") or slot["marketplace"], tx["date"]
+        for comp, field in (("product", "product_cost"), ("shipping", "shipping_cost")):
+            if D(tx.get(field) or 0) > 0:
+                try:
+                    value = await _usd_amount(db, tx, field, usd_bucket=field)
+                except FxError:
+                    continue
+                slot["ledger"][comp] = slot["ledger"].get(comp, D(0)) + value
+    for key, slot in fbm.items():
+        ref = slot["order_id"] or f"İşlem {key[:8]}"
+        for comp, source_type, label in (("product", FBM_PRODUCT_COST, "ürün maliyeti"),
+                                         ("shipping", FBM_SHIPPING_COST, "kargo maliyeti")):
+            value = slot["ledger"].get(comp)
+            if value is None:
+                value = slot["sf"].get(comp)
+            if value is None:
+                continue
+            put(source_type, key, store_id=slot["store_id"], marketplace=slot["marketplace"],
+                date=slot["date"], direction=OUT, amount=value, order_id=slot["order_id"],
+                description=f"FBM {label} · {ref}")
 
     # 3) Amazon disbursement (payout) that reached the bank -> cash in.
     #    Amazon order/payment rows are operational activity only (P&L / Amazon
