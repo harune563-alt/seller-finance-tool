@@ -41,7 +41,7 @@ const ChartTip = ({ active, payload, label }) => {
 
 export const RevenueExpenseChart = ({ trend }) => (
   <Panel title="Gelir vs Gider" hint="Aylık · USD" testId="dash-chart-revenue-expense" className="lg:col-span-2" legend={[["Gelir", C.revenue], ["Gider", C.expense]]}>
-    {!trend.length ? <Empty /> : trend.length === 1 ? <div className="h-64"><ResponsiveContainer>
+    {!trend.length ? <Empty /> : trend.length === 1 ? <div className="h-64"><ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 320, height: 200 }}>
       <BarChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={10}>
         <CartesianGrid stroke={C.grid} vertical={false} />
         <XAxis dataKey="month" {...axis} dy={6} />
@@ -50,7 +50,7 @@ export const RevenueExpenseChart = ({ trend }) => (
         <Bar dataKey="revenue" name="Gelir" fill={C.revenue} radius={[10, 10, 4, 4]} maxBarSize={56} />
         <Bar dataKey="expenses" name="Gider" fill={C.expense} radius={[10, 10, 4, 4]} maxBarSize={56} />
       </BarChart>
-    </ResponsiveContainer></div> : <div className="h-64"><ResponsiveContainer>
+    </ResponsiveContainer></div> : <div className="h-64"><ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 320, height: 200 }}>
       <AreaChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="gRev" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={C.revenue} stopOpacity={0.35} /><stop offset="95%" stopColor={C.revenue} stopOpacity={0} /></linearGradient>
@@ -69,7 +69,7 @@ export const RevenueExpenseChart = ({ trend }) => (
 
 export const NetProfitChart = ({ trend }) => (
   <Panel title="Net Kâr" hint="Aylık · USD" testId="dash-chart-net-profit" legend={[["Kâr", C.profit], ["Zarar", C.expense]]}>
-    {!trend.length ? <Empty /> : <div className="h-64"><ResponsiveContainer>
+    {!trend.length ? <Empty /> : <div className="h-64"><ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 320, height: 200 }}>
       <BarChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="gPos" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#818CF8" /><stop offset="100%" stopColor={C.profit} /></linearGradient>
@@ -90,7 +90,7 @@ export const ChannelChart = ({ insights }) => {
     .filter(([, v]) => v.revenue || v.expenses).map(([name, v]) => ({ name, revenue: v.revenue, net: v.net_profit })) : [];
   return (
     <Panel title="FBA vs FBM Kârlılık" hint="Sınıflandırılmamış = fulfillment bilgisi olmayan siparişler" testId="dash-chart-channel" className="lg:col-span-3" legend={[["Gelir", C.revenue], ["Net Kâr", C.profit]]}>
-      {!data.length ? <Empty /> : <div style={{ height: Math.max(140, data.length * 72) }}><ResponsiveContainer>
+      {!data.length ? <Empty /> : <div style={{ height: Math.max(140, data.length * 72) }}><ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 320, height: 200 }}>
         <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, left: 8, bottom: 0 }} barGap={4}>
           <CartesianGrid stroke={C.grid} horizontal={false} />
           <XAxis type="number" {...axis} tickFormatter={compact} />
