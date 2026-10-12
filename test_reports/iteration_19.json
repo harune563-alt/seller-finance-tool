@@ -1,0 +1,24 @@
+{
+  "summary": "Focused FBM SellerFlash -> Nakit Akışı integration verified. Backend pytest 4/4 PASS at /app/backend/tests/test_cashflow_fbm_integration.py. (1) Pre-existing NG transaction 649f49d0 (CAD income, cost_currency USD, product=50, shipping=100, extra=200) emits exactly one FBM_PRODUCT_COST OUT 50, one FBM_SHIPPING_COST OUT 100, one EXTRA_COST OUT 200 — all original_currency=USD, no CAD conversion. (2) Temp store flow: created income order 111-xxxxxxx-xxxxxxx (FBM, USD, amount=100, extra_cost=3) + SellerFlash CSV commit (product=20, shipping=8). GET /cashflow/entries shows FBM_PRODUCT_COST OUT 20, FBM_SHIPPING_COST OUT 8, EXTRA_COST OUT 3; GET /cashflow/summary cash_out=31.0, cash_in=0.0. (3) Re-import same CSV 3x consecutive -> still exactly one row per component; summary cash_out stays 31.0. (4) Partial completion: new order, product-only commit emits only FBM_PRODUCT_COST=15 (no shipping row); subsequent shipping-only commit adds FBM_SHIPPING_COST=4, product row unchanged (still 15), zero duplicates. UI check at /cashflow: temp store rows render with correct Turkish labels ('FBM Ürün Maliyeti', 'FBM Kargo Maliyeti', 'Ekstra Maliyet') and amounts $20/$8/$3 with 'Çıkış' badge; source_module='SellerFlash' for FBM, 'Ekstra Maliyetler' for extra. Pre-existing NG transaction left untouched. All temp data (temp store, its transactions, sellerflash costs) cleaned up.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_cashflow_fbm_integration.py",
+    "/app/test_reports/pytest/iter19_fbm.xml",
+    "/app/test_reports/iter19_cashflow_tempstore.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "backend/cashflow.py section 2 (lines 160-212) correctly implements FBM slot aggregation: ledger values (from matched income tx product_cost/shipping_cost) take priority, SellerFlash raw record fills component only when ledger is None (unmatched orders). Each component is emitted independently with stable idem_key = FBM_PRODUCT_COST:<order_id> / FBM_SHIPPING_COST:<order_id> via put(source_type, key=slot_key), guaranteeing re-import idempotency and no duplicates on partial completion.",
+    "cost_currency enforcement: SellerFlash costs are already USD; sync does not apply FX for sf_records path (line 185 uses D(value) directly). For ledger path (line 197) _usd_amount handles USD-cost-currency transactions without conversion. Verified: NG CAD income carried USD costs → cash-out rows stay USD, no 1.42x conversion.",
+    "EXTRA_COST row remains independent (section at line 237-243) keyed by tx.id — not merged into FBM slot — so FBM product/shipping and extra are three separate rows, matching spec."
+  ],
+  "updated_files": ["/app/backend/tests/test_cashflow_fbm_integration.py"],
+  "success_rate": {"backend": "100% (4/4)", "frontend": "100%"},
+  "test_credentials": "admin@amzsuite.com / admin123",
+  "seed_data_creation": "Per run: 1 temp store (TEST_FBM_CF_<hex>), 2 FBM income transactions on that store, SellerFlash CSV commits (both components; later partial-completion commits). All deleted in teardown. Pre-existing NG transaction 649f49d0 NOT modified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "FBM cash-flow endpoints: GET /api/cashflow/entries?store_id=<id> returns rows[] with fields {direction (uppercase IN/OUT), source_type (FBM_PRODUCT_COST | FBM_SHIPPING_COST | EXTRA_COST | AMAZON_DISBURSEMENT | FBA_INVENTORY_PURCHASE | FBA_INBOUND_SHIPPING | CAPITAL_INJECTION | CASH_DEPOSIT | CASH_WITHDRAWAL | OWNER_WITHDRAWAL | MANUAL), cash_in/cash_out (one is null), source_id, order_id, original_amount, original_currency}. SellerFlash commit endpoint: POST /api/sellerflash/import?store_id=&commit=true with multipart file (CSV columns 'Seller Order Id', 'Product Cost', 'Initial Shipment Cost', 'Marketplace'). Blank cost cell = no information (component skipped). Re-import keeps costs idempotent; manual override on tx is preserved (match_status='manual_override_preserved').",
+  "rca of the issue": "N/A — FBM SellerFlash → Nakit Akışı integration works end-to-end per spec: components independent, stable ids, no duplicates on re-import, no CAD conversion when cost_currency=USD, EXTRA_COST remains separate."
+}
