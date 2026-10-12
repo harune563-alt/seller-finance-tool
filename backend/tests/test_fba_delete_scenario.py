@@ -8,7 +8,7 @@ import pytest
 import requests
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-ORIGIN = "https://amz-finance-suite.preview.emergentagent.com"
+ORIGIN = "https://fba-finance-hub.preview.emergentagent.com"
 ADMIN = {"email": "admin@amzsuite.com", "password": "admin123"}
 TODAY = date.today().isoformat()
 

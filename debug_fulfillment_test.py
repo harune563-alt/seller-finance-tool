@@ -5,7 +5,7 @@ import requests
 import json
 import io
 
-BASE_URL = "https://sellerfin-tool.preview.emergentagent.com/api"
+BASE_URL = "https://fba-finance-hub.preview.emergentagent.com/api"
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
 

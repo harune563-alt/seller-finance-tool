@@ -22,7 +22,7 @@ import time
 from datetime import datetime
 
 # Backend URL from frontend/.env
-BASE_URL = "https://5d01db41-b7e9-4610-9ea6-2c471b5d6d10.preview.emergentagent.com/api"
+BASE_URL = "https://fba-finance-hub.preview.emergentagent.com/api"
 
 # Test credentials
 ADMIN_EMAIL = "admin@amzsuite.com"

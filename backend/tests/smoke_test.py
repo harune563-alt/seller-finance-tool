@@ -3,7 +3,7 @@ import os
 import requests
 import pytest
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://tamam-seller.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://fba-finance-hub.preview.emergentagent.com").rstrip("/")
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
 
@@ -67,13 +67,13 @@ def test_fx_to_usd(auth_session):
 
 def test_cors_preflight_allowed():
     headers = {
-        "Origin": "https://tamam-seller.preview.emergentagent.com",
+        "Origin": "https://fba-finance-hub.preview.emergentagent.com",
         "Access-Control-Request-Method": "POST",
         "Access-Control-Request-Headers": "content-type",
     }
     r = requests.options(f"{BASE_URL}/api/auth/login", headers=headers)
     assert r.status_code in (200, 204), r.text
-    assert r.headers.get("access-control-allow-origin") == "https://tamam-seller.preview.emergentagent.com"
+    assert r.headers.get("access-control-allow-origin") == "https://fba-finance-hub.preview.emergentagent.com"
 
 
 def test_cors_preflight_denied_evil():

@@ -33,7 +33,7 @@ def _load_frontend_env():
 
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or _load_frontend_env() or "").rstrip("/")
 assert BASE_URL, "REACT_APP_BACKEND_URL missing"
-ORIGIN = "https://amz-finance-suite.preview.emergentagent.com"
+ORIGIN = "https://fba-finance-hub.preview.emergentagent.com"
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
 

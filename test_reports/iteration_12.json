@@ -26,5 +26,5 @@
   "seed_data_creation": "Created ephemeral store 'TEST_PPC_<random>' via POST /api/stores; attached transactions + ppc_attributions were cleaned up in module teardown (ppc_attributions deleted individually, then DELETE /api/stores/{id} which also deletes its transactions). The real user store 'ng' was NOT touched.",
   "retest_needed": false,
   "main_agent_can_self_test": true,
-  "context_for_next_testing_agent": "Backend test file /app/backend/tests/test_ppc_unified.py is self-contained and idempotent (creates/destroys its own TEST_PPC_* store). Run with `pytest backend/tests/test_ppc_unified.py -o addopts= -v`. CORS Origin header 'https://amz-finance-suite.preview.emergentagent.com' is required for state-changing calls when hitting the preview URL."
+  "context_for_next_testing_agent": "Backend test file /app/backend/tests/test_ppc_unified.py is self-contained and idempotent (creates/destroys its own TEST_PPC_* store). Run with `pytest backend/tests/test_ppc_unified.py -o addopts= -v`. CORS Origin header 'https://fba-finance-hub.preview.emergentagent.com' is required for state-changing calls when hitting the preview URL."
 }

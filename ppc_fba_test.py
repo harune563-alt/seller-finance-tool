@@ -8,7 +8,7 @@ from datetime import datetime
 from pymongo import MongoClient
 
 # Configuration
-BASE_URL = "https://136d1416-b1fc-44ae-8449-4020b51cacfc.preview.emergentagent.com/api"
+BASE_URL = "https://fba-finance-hub.preview.emergentagent.com/api"
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
 MONGO_URL = "mongodb://localhost:27017"

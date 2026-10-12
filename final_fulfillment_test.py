@@ -14,7 +14,7 @@ import requests
 import io
 import uuid
 
-BASE_URL = "https://sellerfin-tool.preview.emergentagent.com/api"
+BASE_URL = "https://fba-finance-hub.preview.emergentagent.com/api"
 session = requests.Session()
 
 def unique_id():

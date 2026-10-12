@@ -25,7 +25,7 @@ Import and run existing project from GitHub (repo: harune563-alt/seller-finance-
 ## Notes
 - This pod has a FRESH MongoDB (no previous app data; old environment data not migrated)
 - Broad regression suite intentionally not run per user instruction
-- 2026-10-11 Login fix: user preview is the alias origin https://amz-finance-suite.preview.emergentagent.com; it was missing from backend CORS_ORIGINS → browser blocked the login preflight (no request ever reached backend). Env-only fix: added alias origin to CORS_ORIGINS, restarted backend. Verified in real browser on the alias URL: login 200 → Dashboard loads.
+- 2026-10-11 Login fix: user preview is the alias origin https://fba-finance-hub.preview.emergentagent.com; it was missing from backend CORS_ORIGINS → browser blocked the login preflight (no request ever reached backend). Env-only fix: added alias origin to CORS_ORIGINS, restarted backend. Verified in real browser on the alias URL: login 200 → Dashboard loads.
 
 ## Unified PPC Module (2026-10-11)
 - /ppc single page (nav "PPC Reklam"; /ppc-attribution redirects). Tabs: Genel Bakış, Kayıtları, ASIN/Kampanya Dağılımı, Amazon Payments Mutabakatı
@@ -52,3 +52,6 @@ Import and run existing project from GitHub (repo: harune563-alt/seller-finance-
 ## Backlog
 - P0: none — ready for next development task
 - P1/P2: per user's next feature requests
+
+## Import (2026-10-12)
+- Branch emergent-latest-20261011 (HEAD f7147b1) restored as-is; backend/.env + frontend/.env recreated for preview https://2574333c-5d19-403c-ac30-f56cb9acfdb3.preview.emergentagent.com (new JWT/WEBHOOK secrets, fresh DB). Browser login + Dashboard verified.

@@ -22,7 +22,7 @@ import requests
 import io
 from datetime import datetime
 
-BASE_URL = "https://sellerfin-tool.preview.emergentagent.com/api"
+BASE_URL = "https://fba-finance-hub.preview.emergentagent.com/api"
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
 

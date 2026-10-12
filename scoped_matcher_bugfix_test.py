@@ -22,7 +22,7 @@ with open('/app/backend/.env') as f:
             key, val = line.strip().split('=', 1)
             os.environ[key] = val
 
-BASE_URL = "https://sellerfin-tool.preview.emergentagent.com/api"
+BASE_URL = "https://fba-finance-hub.preview.emergentagent.com/api"
 MONGO_URL = os.environ['MONGO_URL']
 DB_NAME = os.environ['DB_NAME']
 

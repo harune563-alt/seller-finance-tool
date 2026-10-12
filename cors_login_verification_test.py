@@ -4,7 +4,7 @@ CORS Login Verification Test
 Focused backend login verification after CORS env fix.
 
 Test Scope:
-- Verify CORS preflight and login from new origin (https://sellerfin-tool.preview.emergentagent.com)
+- Verify CORS preflight and login from new origin (https://fba-finance-hub.preview.emergentagent.com)
 - Verify authentication flow (valid/invalid credentials)
 - Verify security (untrusted origins denied)
 - Verify regression (previously configured origin still works)
@@ -17,9 +17,9 @@ import sys
 from typing import Dict, Any
 
 # Public preview URL from frontend/.env
-BASE_URL = "https://sellerfin-tool.preview.emergentagent.com"
-NEW_ORIGIN = "https://sellerfin-tool.preview.emergentagent.com"
-OLD_ORIGIN = "https://5d01db41-b7e9-4610-9ea6-2c471b5d6d10.preview.emergentagent.com"
+BASE_URL = "https://fba-finance-hub.preview.emergentagent.com"
+NEW_ORIGIN = "https://fba-finance-hub.preview.emergentagent.com"
+OLD_ORIGIN = "https://fba-finance-hub.preview.emergentagent.com"
 EVIL_ORIGIN = "https://evil.example.com"
 
 # Test credentials
@@ -58,7 +58,7 @@ class TestResult:
 
 def test_1_preflight_new_origin(result: TestResult):
     """Test 1: OPTIONS preflight from new origin should return 200 with CORS headers"""
-    print("\n[TEST 1] CORS preflight from new origin (https://sellerfin-tool.preview.emergentagent.com)")
+    print("\n[TEST 1] CORS preflight from new origin (https://fba-finance-hub.preview.emergentagent.com)")
     
     try:
         response = requests.options(

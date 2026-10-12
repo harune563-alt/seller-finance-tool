@@ -18,8 +18,8 @@ from dotenv import load_dotenv
 load_dotenv('/app/backend/.env')
 
 # Test configuration
-FRIENDLY_ALIAS = "https://amazon-payments-dev.preview.emergentagent.com"
-CANONICAL_URL = "https://d475802d-d8ad-42a5-8683-782b6f0e8c23.preview.emergentagent.com"
+FRIENDLY_ALIAS = "https://fba-finance-hub.preview.emergentagent.com"
+CANONICAL_URL = "https://fba-finance-hub.preview.emergentagent.com"
 UNTRUSTED_ORIGIN = "https://evil.example.com"
 
 VALID_EMAIL = "admin@amzsuite.com"

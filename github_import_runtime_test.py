@@ -9,7 +9,7 @@ import sys
 from typing import Dict, Any
 
 # Test configuration
-BACKEND_URL = "https://5d01db41-b7e9-4610-9ea6-2c471b5d6d10.preview.emergentagent.com"
+BACKEND_URL = "https://fba-finance-hub.preview.emergentagent.com"
 API_BASE = f"{BACKEND_URL}/api"
 ADMIN_EMAIL = "admin@amzsuite.com"
 ADMIN_PASSWORD = "admin123"
