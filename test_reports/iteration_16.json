@@ -1,0 +1,26 @@
+{
+  "summary": "RETEST of iteration-15 fix for Amazon payout -> Cash Flow (AMAZON_DISBURSEMENT) integration. Backend pytest 7/7 PASS. UI end-to-end on Nakit Akışı page PASS: Bankada payout CA$100 produces exactly one 'Amazon Ödemesi (Bankada)' Giriş row with description 'Amazon ödemesi · 100.00 CAD · Ref UITEST-...' , Nakit Giriş $71.76 (USD-converted via Frankfurter CAD->USD 0.7176). Toplam Nakit Girişi / Net Nakit Akışı / Kapanış Nakit all reflect the USD amount. Reload shows the same single row (idempotent). Test data cleaned up (tx + store deleted).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_cashflow_amazon_disbursement.py",
+    "/app/test_reports/cf_page_01.png",
+    "/app/test_reports/cf_page_02.png",
+    "/app/test_reports/cf_page_03_reload.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix in cashflow.py section 3 (payout -> AMAZON_DISBURSEMENT) correctly bypasses the usd_ledger.attach_usd zeroing of amount_usd for payouts by calling get_rate(currency, date) directly. Verified by GET /api/cashflow/entries returning amount_usd=71.76 for a 100 CAD payout.",
+    "Idempotency verified at both API (3x GET returns identical row) and UI (reload keeps exactly one row). source_id = tx.id guarantees upsert uniqueness.",
+    "Income rows (type='income') correctly do NOT appear as cash-in — covered by regression test test_income_not_cash_in and visually confirmed (no stray rows for order revenue).",
+    "The Nakit Akışı page route is /cashflow (not /cash-flow). Confirmed from App.js. Not a bug but worth noting for next tester."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100%"},
+  "test_credentials": "admin@amzsuite.com / admin123",
+  "seed_data_creation": "Each test run creates a TEST_UI_CF_<ts>_<rand> store (marketplaces=['CA'], default_currency='CAD') plus one Bankada payout CA$100 dated 2025-10-02. All test data cleaned up via DELETE at end of run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Regression suite at /app/backend/tests/test_cashflow_amazon_disbursement.py (7 tests, all green). Run: `env REACT_APP_BACKEND_URL=https://fba-finance-hub.preview.emergentagent.com python -m pytest backend/tests/test_cashflow_amazon_disbursement.py -v -o addopts=`. UI route for Nakit Akışı = /cashflow. Store selector uses data-testid*='store'. Payout create payload requires {store_id, marketplace:'CA', type:'payout', category:'Bankada'|'İşleniyor', amount, currency:'CAD', date, payment_reference}. Store create payload uses {name, marketplaces:['CA'], default_currency:'CAD'} (NOT singular marketplace/currency keys). CAD->USD rate on 2025-10-02 ≈ 0.7176.",
+  "rca of the issue": "N/A — bug from iteration 15 is fixed. Verified: cashflow.sync_cash_flow section 3 now computes USD amount from (tx.amount, tx.currency, tx.date) via get_rate directly instead of relying on doc['amount_usd'] (which usd_ledger.attach_usd intentionally sets to 0 for payouts)."
+}
