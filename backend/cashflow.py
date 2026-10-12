@@ -150,7 +150,10 @@ async def sync_cash_flow(db, user_id):
     async for tx in db.transactions.find(
             {"user_id": user_id, "type": "payout", "category": "Bankada"}, {"_id": 0}):
         try:
-            amount = await _usd_amount(db, tx, "amount")
+            # Payouts carry amount_usd=0 by design (not P&L); convert the real payout amount.
+            currency = tx.get("currency") or "USD"
+            rate = D(1) if currency == "USD" else D((await get_rate(db, currency, tx["date"]))["rate"])
+            amount = money(D(tx["amount"]) * rate)
         except FxError:
             continue  # FX not available yet; entry appears on a later sync.
         original = money(tx["amount"])

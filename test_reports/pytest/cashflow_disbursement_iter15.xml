@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="7" time="4.490" timestamp="2026-10-12T09:33:04.921704+00:00" hostname="agent-env-2574333c-5d19-403c-ac30-f56cb9acfdb3"><testcase classname="tests.test_cashflow_amazon_disbursement" name="test_bankada_payout_creates_one_disbursement_entry" time="1.371"><failure message="AssertionError: expected 1 AMAZON_DISBURSEMENT, got 0: []&#10;assert 0 == 1&#10; +  where 0 = len([])">client = &lt;requests.sessions.Session object at 0xfeb7c180f810&gt;
+store = {'id': '228f50fc-aa75-46bd-b614-96ed4fb944aa', 'name': 'TEST_CF_DISB_7c4a9c', 'marketplaces': ['CA'], 'default_currency': 'CAD', ...}
+
+    def test_bankada_payout_creates_one_disbursement_entry(client, store):
+        ref = f"TEST-REF-{uuid.uuid4().hex[:6]}"
+        payout = _make_payout(client, store["id"], category="Bankada", amount=100, ref=ref)
+        data = _entries(client, store["id"])
+        disbs = [r for r in data["rows"] if r["source_type"] == "AMAZON_DISBURSEMENT"]
+&gt;       assert len(disbs) == 1, f"expected 1 AMAZON_DISBURSEMENT, got {len(disbs)}: {disbs}"
+E       AssertionError: expected 1 AMAZON_DISBURSEMENT, got 0: []
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+backend/tests/test_cashflow_amazon_disbursement.py:85: AssertionError</failure></testcase><testcase classname="tests.test_cashflow_amazon_disbursement" name="test_summary_reflects_disbursement" time="0.064"><failure message="AssertionError: {'currency': 'USD', 'opening_cash': 0.0, 'cash_in': 0.0, 'cash_out': 0.0, ...}&#10;assert 0.0 &gt; 0">client = &lt;requests.sessions.Session object at 0xfeb7c180f810&gt;
+store = {'id': '228f50fc-aa75-46bd-b614-96ed4fb944aa', 'name': 'TEST_CF_DISB_7c4a9c', 'marketplaces': ['CA'], 'default_currency': 'CAD', ...}
+
+    def test_summary_reflects_disbursement(client, store):
+        s = _summary(client, store["id"])
+&gt;       assert s["cash_in"] &gt; 0, s
+E       AssertionError: {'currency': 'USD', 'opening_cash': 0.0, 'cash_in': 0.0, 'cash_out': 0.0, ...}
+E       assert 0.0 &gt; 0
+
+backend/tests/test_cashflow_amazon_disbursement.py:100: AssertionError</failure></testcase><testcase classname="tests.test_cashflow_amazon_disbursement" name="test_repeated_reads_do_not_duplicate" time="0.976"><failure message="AssertionError: duplication after repeated reads: 0&#10;assert 0 == 1&#10; +  where 0 = len([])">client = &lt;requests.sessions.Session object at 0xfeb7c180f810&gt;
+store = {'id': '228f50fc-aa75-46bd-b614-96ed4fb944aa', 'name': 'TEST_CF_DISB_7c4a9c', 'marketplaces': ['CA'], 'default_currency': 'CAD', ...}
+
+    def test_repeated_reads_do_not_duplicate(client, store):
+        for _ in range(5):
+            _entries(client, store["id"])
+            _summary(client, store["id"])
+        data = _entries(client, store["id"])
+        disbs = [r for r in data["rows"] if r["source_type"] == "AMAZON_DISBURSEMENT"]
+&gt;       assert len(disbs) == 1, f"duplication after repeated reads: {len(disbs)}"
+E       AssertionError: duplication after repeated reads: 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+backend/tests/test_cashflow_amazon_disbursement.py:112: AssertionError</failure></testcase><testcase classname="tests.test_cashflow_amazon_disbursement" name="test_concurrent_reads_do_not_duplicate" time="0.546"><failure message="AssertionError: duplication after concurrent reads: 0&#10;assert 0 == 1&#10; +  where 0 = len([])">client = &lt;requests.sessions.Session object at 0xfeb7c180f810&gt;
+store = {'id': '228f50fc-aa75-46bd-b614-96ed4fb944aa', 'name': 'TEST_CF_DISB_7c4a9c', 'marketplaces': ['CA'], 'default_currency': 'CAD', ...}
+
+    def test_concurrent_reads_do_not_duplicate(client, store):
+        async def hammer():
+            loop = asyncio.get_event_loop()
+            tasks = [loop.run_in_executor(None, lambda: _entries(client, store["id"])) for _ in range(10)]
+            await asyncio.gather(*tasks)
+        asyncio.run(hammer())
+        data = _entries(client, store["id"])
+        disbs = [r for r in data["rows"] if r["source_type"] == "AMAZON_DISBURSEMENT"]
+&gt;       assert len(disbs) == 1, f"duplication after concurrent reads: {len(disbs)}"
+E       AssertionError: duplication after concurrent reads: 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+backend/tests/test_cashflow_amazon_disbursement.py:124: AssertionError</failure></testcase><testcase classname="tests.test_cashflow_amazon_disbursement" name="test_resave_payout_no_duplicate" time="0.075"><failure message="StopIteration">client = &lt;requests.sessions.Session object at 0xfeb7c180f810&gt;
+store = {'id': '228f50fc-aa75-46bd-b614-96ed4fb944aa', 'name': 'TEST_CF_DISB_7c4a9c', 'marketplaces': ['CA'], 'default_currency': 'CAD', ...}
+
+    def test_resave_payout_no_duplicate(client, store):
+        data = _entries(client, store["id"])
+&gt;       disb = next(r for r in data["rows"] if r["source_type"] == "AMAZON_DISBURSEMENT")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+backend/tests/test_cashflow_amazon_disbursement.py:130: StopIteration</failure></testcase><testcase classname="tests.test_cashflow_amazon_disbursement" name="test_isleniyor_to_bankada_transition" time="0.324"><failure message="AssertionError: expected one entry after transition, got 0&#10;assert 0 == 1&#10; +  where 0 = len([])">client = &lt;requests.sessions.Session object at 0xfeb7c180f810&gt;
+store = {'id': '228f50fc-aa75-46bd-b614-96ed4fb944aa', 'name': 'TEST_CF_DISB_7c4a9c', 'marketplaces': ['CA'], 'default_currency': 'CAD', ...}
+
+    def test_isleniyor_to_bankada_transition(client, store):
+        ref2 = f"TEST-REF2-{uuid.uuid4().hex[:6]}"
+        payout = _make_payout(client, store["id"], category="İşleniyor", amount=50, ref=ref2, date="2025-10-05")
+        data = _entries(client, store["id"])
+        for r in data["rows"]:
+            assert r.get("source_id") != payout["id"], f"İşleniyor should not create cash flow entry: {r}"
+    
+        # Transition to Bankada
+        body = {
+            "store_id": store["id"], "marketplace": "CA", "type": "payout",
+            "category": "Bankada", "amount": 50, "currency": "CAD",
+            "date": "2025-10-05", "payment_reference": ref2,
+        }
+        r = client.put(f"{API}/transactions/{payout['id']}", json=body)
+        assert r.status_code == 200, r.text
+    
+        data = _entries(client, store["id"])
+        matching = [r for r in data["rows"] if r["source_type"] == "AMAZON_DISBURSEMENT" and r["source_id"] == payout["id"]]
+&gt;       assert len(matching) == 1, f"expected one entry after transition, got {len(matching)}"
+E       AssertionError: expected one entry after transition, got 0
+E       assert 0 == 1
+E        +  where 0 = len([])
+
+backend/tests/test_cashflow_amazon_disbursement.py:164: AssertionError</failure></testcase><testcase classname="tests.test_cashflow_amazon_disbursement" name="test_income_not_cash_in" time="0.865" /></testsuite></testsuites>

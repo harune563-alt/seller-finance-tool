@@ -1,0 +1,40 @@
+{
+  "summary": "Focused test of Amazon payout -> Cash Flow (AMAZON_DISBURSEMENT) integration. 1/7 pytest cases pass; 6/7 FAIL because Bankada payouts never produce a cash_flow_entries row at all (not a duplication issue — total zero). Root cause isolated to a bug in cashflow._usd_amount vs usd_ledger.attach_usd interaction. UI flow was not exercised because the underlying API feature is broken; UI would show nothing either way.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/cashflow/entries & /api/cashflow/summary (sync_cash_flow section 3)",
+        "issue": "A payout tx with type=payout, category=Bankada never materializes an AMAZON_DISBURSEMENT entry. Verified end-to-end: POST /api/transactions with {type:'payout', category:'Bankada', amount:100, currency:'CAD', date:'2026-10-02', payment_reference:'...'} returns 200 and the tx is stored, but GET /api/cashflow/entries?store_id=<id> returns rows=[] and GET /api/cashflow/summary returns cash_in=0, net_cash_flow=0.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_cashflow_amazon_disbursement.py",
+    "/app/test_reports/pytest/cashflow_disbursement_iter15.xml"
+  ],
+  "action_items": [
+    "Fix cashflow.py `_usd_amount` so payouts fall through to the FX conversion branch. Simplest fix: at the top of sync_cash_flow section 3, do NOT rely on `_usd_amount(..., usd_bucket=None)` for payouts (because attach_usd forcibly sets amount_usd=0 for payouts in usd_ledger.py). Compute from the raw amount+currency, e.g.: `rate = (await get_rate(db, tx['currency'], tx['date']))['rate']; amount = money(D(tx['amount']) * D(rate))` (or 1.0 if currency=='USD'). Guard with try/except FxError like today.",
+    "Alternatively, patch `_usd_amount` to skip the stored amount_usd when the doc's type is 'payout' (since usd_ledger intentionally zeroes it out).",
+    "After fix, re-run /app/backend/tests/test_cashflow_amazon_disbursement.py — the 6 failing cases should turn green with no code changes needed to the tests."
+  ],
+  "critical_code_review_comments": [
+    "usd_ledger.attach_usd L28-29: returns `amount_usd: 0` for ALL payouts (`fx_status: not_required`). This is intentional for Amazon Payments / P&L (payouts aren't P&L), but cashflow.sync_cash_flow treats a stored amount_usd of 0 the same as a legitimate zero and the entry is dropped by the `if amount <= 0: return` guard in put().",
+    "cashflow._usd_amount L82: `if doc.get('amount_usd') is not None and usd_bucket is None: return money(doc['amount_usd'])` — 0.0 is not None, so for payouts this returns 0 and the branch that calls get_rate() is never reached. The AMAZON_DISBURSEMENT path is dead code in current combination.",
+    "cashflow.put() L106-107: swallows amount<=0 silently with no logging; combined with the above, there is no backend log hint that the disbursement sync is a no-op. Consider logging when a payout is in `Bankada` but gets skipped — that would have surfaced this in one test.",
+    "No duplicate-prevention concerns were observable because the primary path never produces even one row. The idempotency logic (idem_key=`AMAZON_DISBURSEMENT:<tx_id>`, _setOnInsert on upsert, DuplicateKeyError swallow, stale cleanup for non-manual entries) is well-structured and should work correctly once the amount bug is fixed.",
+    "Minor: test 7 (`income not cash-in`) passes trivially today because the entire payout path produces nothing. After the fix lands, keep this test — it still enforces that order payments must not leak into cash_in."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_cashflow_amazon_disbursement.py (new focused regression suite — 7 cases: single Bankada payout -> 1 entry, summary math, idempotent repeated reads, 10x concurrent reads, re-save via PUT /transactions, İşleniyor->Bankada transition, income NOT cash-in)"
+  ],
+  "success_rate": {"backend": "14% (1/7)", "frontend": "not tested — blocked by backend bug"},
+  "test_credentials": "admin@amzsuite.com / admin123",
+  "seed_data_creation": "Each run creates a TEST_CF_DISB_<rand> store with CA marketplace; teardown bulk-deletes its transactions and the store.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Regression lives in /app/backend/tests/test_cashflow_amazon_disbursement.py. Run: `env REACT_APP_BACKEND_URL=https://fba-finance-hub.preview.emergentagent.com python -m pytest backend/tests/test_cashflow_amazon_disbursement.py -v -o addopts=`. All 7 cases should pass after the fix in action_items. Note: system clock is Oct 2026; tests use date 2025-10-01..05 which Frankfurter has rates for (verified). Also note: usd_ledger.attach_usd deliberately sets amount_usd=0 for payouts — do NOT change that; fix cashflow module instead.",
+  "rca of the issue": "Reproduction: POST /api/transactions {type:'payout', category:'Bankada', amount:100, currency:'CAD', date:'2026-10-02', payment_reference:'REFXYZ'} -> 200. GET /api/cashflow/entries?store_id=... -> rows:[]. Root cause: usd_ledger.attach_usd L28-29 returns amount_usd=0 with fx_status='not_required' for ALL payouts (so that Amazon Payments / P&L never double-counts payouts). cashflow._usd_amount L82 checks `if doc.get('amount_usd') is not None` — 0.0 passes that check — and returns money(0). Then cashflow.put() L106 guards `if amount <= 0: return`, so the AMAZON_DISBURSEMENT upsert is never called. Mitigation: in cashflow sync_cash_flow section 3, bypass the amount_usd snapshot for payouts and always compute from (amount, currency, date) via get_rate; or special-case payouts inside _usd_amount."
+}
